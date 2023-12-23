@@ -1,3 +1,13 @@
-.git
+﻿.git
 roms
 .ipynb_checkpoints
+
+# Virtual environment
+dqn
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
