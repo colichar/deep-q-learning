@@ -9,6 +9,7 @@ from tensorflow import constant, where, GradientTape, reduce_max, expand_dims
 
 from skimage.transform import resize
 from PIL import Image
+import matplotlib.pyplot as plt
 
 class SpaceInvaderAgent:
     def __init__(
@@ -44,8 +45,11 @@ class SpaceInvaderAgent:
         self.ExploreVsExploit = ExplorationVsExploitation(self.MainModel, self.my_env.action_space.n)
         
         self.losses = []
-        self.averaged_losses = []
-        self.rewards = []
+
+        self.history = {
+            'averaged_losses': [],
+            'rewards': []
+        }
         
         self.eval_rewards = []
         self.frames_for_gif = []
@@ -111,6 +115,7 @@ class SpaceInvaderAgent:
                     loss = self.update_step()
                     self.losses.append(loss)
 
+
                 # perform weights update for target model
                 if frame_num % self.update_target_freq == 0 and frame_num > self.memory_warmup:
                     self.TargetModel.set_weights(self.MainModel.get_weights())
@@ -118,9 +123,9 @@ class SpaceInvaderAgent:
                 
                 # averaging past losses
                 if frame_num % self.average_loss_freq == 0 and frame_num > self.memory_warmup:
-                    self.averaged_losses.append(mean(self.losses))
+                    self.history['averaged_losses'].append(mean(self.losses))
                     self.losses = []
-                    print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
+                    print("Finished", frame_num, "frames. Loss:", self.history['averaged_losses'][-1])
 
                 curr_state = new_state
                 curr_raw_obs = new_raw_obs
@@ -129,16 +134,7 @@ class SpaceInvaderAgent:
                     break
 
             print("Episode finished. Reward:", episode_reward)
-            self.rewards.append(episode_reward)
-            
-        return self.averaged_losses, self.rewards
-    
-    def export_as_gif(self, frames:list, name:str):
-        resized_frames = [resize(frame, (420, 320, 3), preserve_range=True, order=0).astype(uint8) for frame in frames]
-
-        images = [Image.fromarray(frame) for frame in resized_frames]
-
-        images[0].save(name, save_all=True, append_images=images[1:], duration=100, loop=0)
+            self.history['rewards'].append(episode_reward)
     
     def evaluate(self):
         self.eval_rewards = []
@@ -179,6 +175,21 @@ class SpaceInvaderAgent:
             num_of_ep += 1
 
         return self.eval_rewards
+
+    def export_as_gif(self, frames:list, name:str):
+        resized_frames = [resize(frame, (420, 320, 3), preserve_range=True, order=0).astype(uint8) for frame in frames]
+
+        images = [Image.fromarray(frame) for frame in resized_frames]
+
+        images[0].save(name, save_all=True, append_images=images[1:], duration=100, loop=0)
+
+    def plot_history(self):
+        fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(10, 3))
+        ax1.set_title('Training losses')
+        ax1.plot(self.history['averaged_losses'])
+        ax2.set_title('Training rewards')
+        ax2.plot(self.history['rewards'], 'o')
+        fig.tight_layout()
 
 class ExplorationVsExploitation:
     """
@@ -232,4 +243,5 @@ class ExplorationVsExploitation:
         else:
             # we choose the action yielding the highest reward according to our main model
             model_prediction = self.dqn_model.best_action(expand_dims(curr_state, axis=0))
+            model_prediction = int(model_prediction.numpy())
             return model_prediction

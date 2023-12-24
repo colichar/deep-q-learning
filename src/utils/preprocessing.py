@@ -3,7 +3,7 @@ from numpy import array
 
 class Preprocessor:
     """
-    Takes care of preprocessing frames of th game for the models.
+    Takes care of preprocessing frames of the game for the models.
     """
     
     def __init__(self, height:int=84, width:int=84):
