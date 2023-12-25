@@ -16,9 +16,22 @@ class ReplayMemory:
         self.buffer_action = tf.Variable(tf.zeros((max_samples,), dtype=tf.int32))
         self.buffer_reward = tf.Variable(tf.zeros((max_samples,), dtype=tf.float32))
         self.buffer_lives = tf.Variable(tf.zeros((max_samples,), dtype=tf.int32))
+
+        # Initialize checkpoint for saving/loading
+        self.checkpoint = tf.train.Checkpoint(buffer_current_state=self.buffer_current_state,
+                                     buffer_next_state=self.buffer_next_state,
+                                     buffer_action=self.buffer_action,
+                                     buffer_reward=self.buffer_reward,
+                                     buffer_lives=self.buffer_lives,
+                                     idx=self.idx)
     
     def add_transition(self, transition):
-        """Adds new transition to replay memory."""
+        """
+        Adds new transition to replay memory.
+        
+        Parameters:
+        - transition (tuple): The path where the data should be saved.
+        """
         current_state, next_state, action, reward, lives = transition
         
         # Update the counter and get the current index
@@ -36,7 +49,9 @@ class ReplayMemory:
         self.num_of_exp.assign_add(1)
     
     def _batch_random(self):
-        """Creates a randomly picked training batch from memory."""
+        """
+        Creates a randomly picked training batch from memory.
+        """
         # Fix so empty transitions are not selected
         maxval = tf.cond(
             tf.math.less(self.num_of_exp, self.max_samples),
@@ -63,6 +78,32 @@ class ReplayMemory:
 
         return sampled_data
 
+    def save_replay_memory(self, path):
+        """
+        Saves the agents replay memory to disk.
+    
+        Parameters:
+        - path (str): The path where the data should be saved.
+        """
+        self.checkpoint.save(path)
+
+    def load_replay_memory(self, path):
+        """
+        Loads the agents replay memory from disk.
+    
+        Parameters:
+        - path (str): The path frome where the data should be loaded.
+        """
+        # Restore buffers from disk
+        status = self.checkpoint.restore(tf.train.latest_checkpoint(path))
+
+        # Assign the restored values to the buffers
+        #self.buffer_current_state.assign(status.buffer_current_state)
+        #self.buffer_next_state.assign(status.buffer_next_state)
+        #self.buffer_action.assign(status.buffer_action)
+        #self.buffer_reward.assign(status.buffer_reward)
+        #self.buffer_lives.assign(status.buffer_lives)
+    
     @property
     def element_spec(self):
         return (
