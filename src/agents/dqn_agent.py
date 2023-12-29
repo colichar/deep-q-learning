@@ -4,8 +4,8 @@ from ..models.cnn_model import CNNModel
 
 import gym
 
-from numpy import uint8, mean, random
-from tensorflow import constant, where, GradientTape, reduce_max, expand_dims, TensorArray, float32, train
+from numpy import uint8, random
+from tensorflow import constant, where, GradientTape, reduce_max, reduce_mean, expand_dims, TensorArray, float32, stack
 from tensorflow.io import write_file, serialize_tensor, parse_tensor, read_file
 
 from skimage.transform import resize
@@ -24,11 +24,13 @@ class SpaceInvaderAgent:
         max_train_frames = 5 * 10**4,
         update_main_freq = 4,
         update_target_freq = 0.25 * 10**4,
+        log_freq = 0.2 * 10**4,
         average_loss_freq = 400,
-        discount = 0.99,
-        eval_episodes = 10
+        discount = 0.99
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=5, render_mode="rgb_array")
+
+        self.start_frame_num = 0
 
         self.batch_size = batch_size
         self.max_train_frames = max_train_frames
@@ -36,8 +38,8 @@ class SpaceInvaderAgent:
         self.update_main_freq = update_main_freq
         self.update_target_freq = update_target_freq
         self.average_loss_freq = average_loss_freq
+        self.log_freq = log_freq
         self.discount = constant(discount)
-        self.eval_episodes = eval_episodes
         
         self.MainModel = CNNModel(self.my_env.action_space.n, learning_rate)
         self.TargetModel = CNNModel(self.my_env.action_space.n)
@@ -85,9 +87,9 @@ class SpaceInvaderAgent:
 
     
     def train(self):
-        frame_num = 0
+        frame_num = self.start_frame_num + 1
         
-        while (frame_num < self.max_train_frames):
+        while (frame_num <= self.max_train_frames + self.start_frame_num):
             episode_reward = 0
             
             curr_state, curr_raw_obs = self.Preprocessor.initialize_state(self.my_env)
@@ -124,18 +126,21 @@ class SpaceInvaderAgent:
                 
                 # averaging past losses
                 if frame_num % self.average_loss_freq == 0 and frame_num > self.memory_warmup:
+                    current_averaged_loss = stack([frame_num, reduce_mean(self.losses.stack(), axis=0)])
                     self.averaged_losses = self.averaged_losses.write(
                         self.averaged_losses.size(),
-                        mean(self.losses)
+                        current_averaged_loss
                     )
                     
-                    self.losses = self.losses.clear()
-                    print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
+                    self.losses = TensorArray(float32, size=0, dynamic_size=True)
+
+                    if frame_num % self.log_freq == 0:
+                        print("Finished", frame_num, "frames. Loss:", current_averaged_loss.numpy()[-1])
 
                 curr_state = new_state
                 curr_raw_obs = new_raw_obs
                 frame_num += 1
-                if frame_num >= self.max_train_frames:
+                if frame_num > self.max_train_frames + self.start_frame_num:
                     break
 
             print("Episode finished. Reward:", episode_reward)
@@ -144,13 +149,13 @@ class SpaceInvaderAgent:
                         episode_reward
                     )
     
-    def evaluate(self):
+    def evaluate(self, eval_episodes):
         self.eval_rewards = []
         self.frames_for_gif = []
         num_of_ep = 1
 
         ## start outer loop of the number of episode we'll train the model for
-        for episode in range(self.eval_episodes):
+        for episode in range(eval_episodes):
 
             episode_reward = 0
             alive = True
@@ -194,7 +199,9 @@ class SpaceInvaderAgent:
     def plot_history(self):
         fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(10, 3))
         ax1.set_title('Training losses')
-        ax1.plot(self.averaged_losses.stack())
+        x_values = self.averaged_losses.stack().numpy()[::,0]
+        y_values = self.averaged_losses.stack().numpy()[::,1]
+        ax1.plot(x_values, y_values)
         ax2.set_title('Training rewards')
         ax2.plot(self.rewards.stack(), 'o')
         fig.tight_layout()
@@ -246,10 +253,12 @@ class SpaceInvaderAgent:
 
     def save_train_history(self, path):
         # Save training history
-        losses = self.averaged_losses.stack()
+        averaged_losses = self.averaged_losses.stack()
+        losses = self.losses.stack()
         rewards = self.rewards.stack()
 
         write_file(path + '/losses.tf', serialize_tensor(losses))
+        write_file(path + '/averaged_losses.tf', serialize_tensor(averaged_losses))
         write_file(path + '/rewards.tf', serialize_tensor(rewards))
 
     def load(self,
@@ -292,12 +301,17 @@ class SpaceInvaderAgent:
 
     def load_train_history(self,path):
         losses = parse_tensor(read_file(path + '/losses.tf'), out_type=float32)
+        averaged_losses = parse_tensor(read_file(path + '/averaged_losses.tf'), out_type=float32)
         rewards = parse_tensor(read_file(path + '/rewards.tf'), out_type=float32)
 
-        self.averaged_losses = TensorArray(dtype=float32, size=losses.shape[0], dynamic_size=True)
-        self.averaged_losses = self.averaged_losses.unstack(losses)
+        self.losses = TensorArray(dtype=float32, size=losses.shape[0], dynamic_size=True)
+        self.losses = self.losses.unstack(losses)
+        self.averaged_losses = TensorArray(dtype=float32, size=averaged_losses.shape[0], dynamic_size=True)
+        self.averaged_losses = self.averaged_losses.unstack(averaged_losses)
         self.rewards = TensorArray(dtype=float32, size=rewards.shape[0], dynamic_size=True)
         self.rewards = self.rewards.unstack(rewards)
+
+        self.start_frame_num = int(averaged_losses[-1, 0].numpy())
 
 
 class ExplorationVsExploitation:
