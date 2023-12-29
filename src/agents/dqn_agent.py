@@ -5,7 +5,8 @@ from ..models.cnn_model import CNNModel
 import gym
 
 from numpy import uint8, mean, random
-from tensorflow import constant, where, GradientTape, reduce_max, expand_dims, TensorArray, float32
+from tensorflow import constant, where, GradientTape, reduce_max, expand_dims, TensorArray, float32, train
+from tensorflow.io import write_file, serialize_tensor, parse_tensor, read_file
 
 from skimage.transform import resize
 from PIL import Image
@@ -48,10 +49,8 @@ class SpaceInvaderAgent:
         
         self.losses = TensorArray(float32, size=0, dynamic_size=True)
 
-        self.history = {
-            'averaged_losses': TensorArray(float32, size=0, dynamic_size=True),
-            'rewards': TensorArray(float32, size=0, dynamic_size=True)
-        }
+        self.averaged_losses = TensorArray(float32, size=0, dynamic_size=True)
+        self.rewards = TensorArray(float32, size=0, dynamic_size=True)
         
         self.eval_rewards = []
         self.frames_for_gif = []
@@ -125,13 +124,13 @@ class SpaceInvaderAgent:
                 
                 # averaging past losses
                 if frame_num % self.average_loss_freq == 0 and frame_num > self.memory_warmup:
-                    self.history['averaged_losses'] = self.history['averaged_losses'].write(
-                        self.history['averaged_losses'].size(),
+                    self.averaged_losses = self.averaged_losses.write(
+                        self.averaged_losses.size(),
                         mean(self.losses)
                     )
                     
                     self.losses = self.losses.clear()
-                    print("Finished", frame_num, "frames. Loss:", self.history['averaged_losses'][-1])
+                    print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
 
                 curr_state = new_state
                 curr_raw_obs = new_raw_obs
@@ -140,8 +139,8 @@ class SpaceInvaderAgent:
                     break
 
             print("Episode finished. Reward:", episode_reward)
-            self.history['rewards'] = self.history['rewards'].write(
-                        self.history['rewards'].size(),
+            self.rewards = self.rewards.write(
+                        self.rewards.size(),
                         episode_reward
                     )
     
@@ -195,12 +194,17 @@ class SpaceInvaderAgent:
     def plot_history(self):
         fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(10, 3))
         ax1.set_title('Training losses')
-        ax1.plot(self.history['averaged_losses'].stack())
+        ax1.plot(self.averaged_losses.stack())
         ax2.set_title('Training rewards')
-        ax2.plot(self.history['rewards'].stack(), 'o')
+        ax2.plot(self.rewards.stack(), 'o')
         fig.tight_layout()
 
-    def save(self, path, model_weights_prefix = 'mw', replay_memory_prefix = 'rm'):
+    def save(self,
+             path,
+             model_weights_prefix = 'mw',
+             replay_memory_prefix = 'rm',
+             train_history_prefix = 'th'
+            ):
         """
         Saves the agents replay memory, training history and model weights to disk.
     
@@ -210,33 +214,48 @@ class SpaceInvaderAgent:
 
         model_weights_path = path + '/model'
         replay_memory_path = path + '/replay_memory'
+        train_history_path = model_weights_path + '/history'
+
+        if not os.path.exists(replay_memory_path):
+            os.makedirs(replay_memory_path)
+            print(f"Folder '{replay_memory_path}' created.")
         
         if not os.path.exists(model_weights_path):
             os.makedirs(model_weights_path)
             print(f"Folder '{model_weights_path}' created.")
 
-        if not os.path.exists(replay_memory_path):
-            os.makedirs(replay_memory_path)
-            print(f"Folder '{replay_memory_path}' created.")
+        if not os.path.exists(train_history_path):
+            os.makedirs(train_history_path)
+            print(f"Folder '{train_history_path}' created.")
     
         print('Saving replay memory to disk...')
         self.save_replay_memory(replay_memory_path + '/' + replay_memory_prefix)
         print('Replay memory saved.')
         print('Saving model weights and training history to disk...')
-        self.save_model(model_weights_path + '/' + model_weights_prefix)
+        self.save_model_weights(model_weights_path + '/' + model_weights_prefix)
+        self.save_train_history(train_history_path + '/')
         print('Model weights and training history saved.')
 
     def save_replay_memory(self, path):
+        # Save replay memory
         self.ReplayMemory.save_replay_memory(path)
 
-    def save_model(self, path):
+    def save_model_weights(self, path):
         # Save model weights
         self.MainModel.save_weights(path)
 
+    def save_train_history(self, path):
         # Save training history
-        pass
+        losses = self.averaged_losses.stack()
+        rewards = self.rewards.stack()
 
-    def load(self, path, model_weights_prefix = 'mw', replay_memory_prefix = 'rm'):
+        write_file(path + '/losses.tf', serialize_tensor(losses))
+        write_file(path + '/rewards.tf', serialize_tensor(rewards))
+
+    def load(self,
+             path,
+             model_weights_prefix = 'mw'
+            ):
         """
         Loads the agents replay memory, training history and model weights to disk.
     
@@ -245,26 +264,41 @@ class SpaceInvaderAgent:
         """
         model_weights_path = path + '/model'
         replay_memory_path = path + '/replay_memory'
+        train_history_path = model_weights_path + '/history'
+
+        if not os.path.exists(replay_memory_path):
+            raise FileNotFoundError(f"Folder '{replay_memory_path}' does not exist.")
         
         if not os.path.exists(model_weights_path):
             raise FileNotFoundError(f"Folder '{model_weights_path}' does not exist.")
 
-        if not os.path.exists(replay_memory_path):
-            raise FileNotFoundError(f"Folder '{replay_memory_path}' does not exist.")
+        if not os.path.exists(train_history_path):
+            raise FileNotFoundError(f"Folder '{train_history_path}' does not exist.")
 
         print('Loading replay memory from disk...')
         self.load_replay_memory(replay_memory_path)
         print('Replay memory loaded.')
         print('Loading model weights and training history from disk...')
-        self.load_model(model_weights_path + '/' + model_weights_prefix)
+        self.load_model_weights(model_weights_path + '/' + model_weights_prefix)
+        self.load_train_history(train_history_path)
         print('Model weights and training history loaded.')
 
     def load_replay_memory(self, path):
         self.ReplayMemory.load_replay_memory(path)
 
-    def load_model(self, path):
+    def load_model_weights(self, path):
         self.MainModel.load_weights(path)
         self.TargetModel.set_weights(self.MainModel.get_weights())
+
+    def load_train_history(self,path):
+        losses = parse_tensor(read_file(path + '/losses.tf'), out_type=float32)
+        rewards = parse_tensor(read_file(path + '/rewards.tf'), out_type=float32)
+
+        self.averaged_losses = TensorArray(dtype=float32, size=losses.shape[0], dynamic_size=True)
+        self.averaged_losses = self.averaged_losses.unstack(losses)
+        self.rewards = TensorArray(dtype=float32, size=rewards.shape[0], dynamic_size=True)
+        self.rewards = self.rewards.unstack(rewards)
+
 
 class ExplorationVsExploitation:
     """
