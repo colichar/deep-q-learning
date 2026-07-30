@@ -1,6 +1,6 @@
-from src.utils.preprocessing import Preprocessor
+from src.utils.preprocessor import Preprocessor
 from src.utils.replay_memory import ReplayMemory
-from src.models.cnn_model import CNNModel
+from src.models.cnn import CNNModelPY
 
 import gym
 
