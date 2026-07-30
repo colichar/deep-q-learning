@@ -22,7 +22,7 @@ class Preprocessor:
         raw_frames = [env.step(action)[0] for action in actions]
         processed_frames = [self.preprocess_frame(raw_frames[idx], raw_frames[idx + 1]) for idx in range(4)]
 
-        return cat(processed_frames, axis=0).float(), raw_frames[-1]
+        return cat(processed_frames, axis=0), raw_frames[-1]
 
     def encode_frames(self,
                       new_raw_obs,
@@ -57,7 +57,7 @@ class Preprocessor:
         processed_fr = self.crop_frame(processed_fr)
         processed_fr = Resize(size=(self.height, self.width))(processed_fr)
 
-        return processed_fr.float()
+        return processed_fr
 
     def new_state(self,
                   new_raw_obs,
@@ -65,8 +65,10 @@ class Preprocessor:
                   old_state
                   ):
         """
-        Creates a news state from an old state and a new raw frame.
+        Creates a new state from an old state and a new raw frame. Also returns the
+        single new frame on its own, so it can be stored directly in the replay memory.
         """
         processed_fr = self.preprocess_frame(new_raw_obs, old_raw_obs)
+        new_stacked_state = cat([old_state[1:, ::, ::], processed_fr], axis=0)
 
-        return cat([old_state[1:, ::, ::], processed_fr], axis=0)
+        return new_stacked_state, processed_fr.squeeze(0)

@@ -1,0 +1,29 @@
+[project]
+name = "deep-q-learning"
+version = "0.1.0"
+description = "Deep Q-Learning agent for Atari Space Invaders (PyTorch)"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "torch",
+    "torchvision",
+    "pillow",
+    "gymnasium",
+    "ale-py",
+    "autorom[accept-rom-license]",
+    "matplotlib>=3.11.1",
+]
+
+# This laptop has no NVIDIA GPU; torch's default PyPI wheel bundles the full CUDA
+# runtime (~2.5GB of nvidia-* packages) which isn't needed here and was causing
+# repeated download timeouts. Pin to the CPU-only wheel index instead (~200MB).
+# On the training PC (with an actual NVIDIA GPU), drop this override so torch
+# resolves to the default CUDA-enabled wheel - see plans/uv-usage.md.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

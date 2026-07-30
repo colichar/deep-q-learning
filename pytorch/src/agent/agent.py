@@ -2,7 +2,8 @@ from src.utils.preprocessor import Preprocessor
 from src.utils.replay_memory import ReplayMemory
 from src.models.cnn import CNNModelPY
 
-import gym
+import gymnasium as gym
+import ale_py
 from torch import where, max, no_grad, tensor
 from torchvision.transforms import Resize
 from numpy import mean, random, uint8, array
@@ -10,6 +11,9 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import os
 import pickle
+
+gym.register_envs(ale_py)
+
 
 class ExplorationVsExploitation:
     """
@@ -61,7 +65,7 @@ class ExplorationVsExploitation:
             return random.randint(self.n_actions)
         else:
             # we choose the action yielding the highest reward according to our main model
-            model_prediction = self.dqn_model.best_action(curr_state.unsqueeze(0))
+            model_prediction = self.dqn_model.best_action(curr_state.float().unsqueeze(0))
             model_prediction = int(model_prediction[0].numpy())
             return model_prediction
 
@@ -70,7 +74,7 @@ class SpaceInvaderAgent:
     def __init__(
             self,
             learning_rate=0.001,
-            memory_size=10 ** 4,  # 100,
+            memory_size=10 ** 6,
             memory_warmup=0.5 * 10 ** 4,  # 20,
             batch_size=64,  # 5
             max_train_frames=0.6 * 10 ** 4,  # 400
@@ -115,10 +119,11 @@ class SpaceInvaderAgent:
         minibatch = self.ReplayMemory.get_batch()
 
         # Extract individual components from minibatch
-        curr_states, new_states, curr_actions, rewards, lives = minibatch
+        curr_states, new_states, curr_actions, rewards, terminal_mask = minibatch
 
-        # Create boolean mask to identify transitions with lives = 0
-        terminal_mask = (lives == 0)
+        # States are stored as uint8 in the replay memory; cast to float for the model
+        curr_states = curr_states.float()
+        new_states = new_states.float()
 
         # Calculate Q values for non-terminal transitions
         with no_grad():
@@ -162,10 +167,10 @@ class SpaceInvaderAgent:
                 reward = 1 if reward > 0 else -1 if reward < 0 else 0
 
                 # create new sequence with new frame
-                new_state = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
+                new_state, new_frame = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
 
-                # store new transition
-                self.ReplayMemory.add_transition((curr_state, new_state, curr_action, reward, info["lives"]))
+                # store new frame
+                self.ReplayMemory.add_frame(new_frame, curr_action, reward, terminal=not alive)
 
                 # perform weights update for main model
                 if frame_num % self.update_main_freq == 0 and frame_num > self.memory_warmup:
@@ -186,13 +191,6 @@ class SpaceInvaderAgent:
 
                     if frame_num % self.log_freq == 0:
                         print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
-
-                if frame_num % self.memory_size == 0:
-                    snapshots.append(tracemalloc.take_snapshot())
-                    # self.save_train_history(path='./checkpoint/history')
-                    # self.frame_nums = []
-                    # self.averaged_losses = []
-                    # self.rewards = []
 
                 curr_state = new_state
                 curr_raw_obs = new_raw_obs
@@ -232,7 +230,7 @@ class SpaceInvaderAgent:
                     episode_reward += reward
 
                     ## create new sequence with new frame
-                    curr_state = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
+                    curr_state, _ = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
                     curr_raw_obs = new_raw_obs
 
                 self.eval_rewards.append(episode_reward)
