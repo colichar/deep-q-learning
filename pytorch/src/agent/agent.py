@@ -86,7 +86,7 @@ class SpaceInvaderAgent:
             average_loss_freq=400,  # 20
             discount=0.99
     ):
-        self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=5, render_mode="rgb_array")
+        self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
         self.start_frame_num = 0
 
@@ -153,7 +153,7 @@ class SpaceInvaderAgent:
         while (frame_num <= self.max_train_frames + self.start_frame_num):
             episode_reward = 0
 
-            curr_state, curr_raw_obs, info = self.Preprocessor.initialize_state(self.my_env)
+            curr_state, info = self.Preprocessor.initialize_state(self.my_env)
             prev_lives = info["lives"]
             alive = True
 
@@ -161,7 +161,9 @@ class SpaceInvaderAgent:
                 # take action
                 curr_action = self.ExploreVsExploit(curr_state, frame_num)
 
-                new_raw_obs, reward, terminated, truncated, info = self.my_env.step(curr_action)
+                new_raw_obs, reward, terminated, truncated, info = self.Preprocessor.step_with_skip(
+                    self.my_env, curr_action
+                )
 
                 alive = info["lives"] != 0
                 life_lost = info["lives"] < prev_lives
@@ -172,7 +174,7 @@ class SpaceInvaderAgent:
                 reward = 1 if reward > 0 else -1 if reward < 0 else 0
 
                 # create new sequence with new frame
-                new_state, new_frame = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
+                new_state, new_frame = self.Preprocessor.new_state(new_raw_obs, curr_state)
 
                 # store new frame
                 self.ReplayMemory.add_frame(new_frame, curr_action, reward, terminal=life_lost or not alive)
@@ -198,7 +200,6 @@ class SpaceInvaderAgent:
                         print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
 
                 curr_state = new_state
-                curr_raw_obs = new_raw_obs
                 frame_num += 1
                 if frame_num > self.max_train_frames + self.start_frame_num:
                     break
@@ -223,14 +224,16 @@ class SpaceInvaderAgent:
                     alive = True
 
                     ## initialise first sequence of new episode
-                    curr_state, curr_raw_obs, _ = self.Preprocessor.initialize_state(self.my_env)
+                    curr_state, _ = self.Preprocessor.initialize_state(self.my_env)
 
                     while alive:
                         ## choose an exploration/explotation action
                         curr_action = self.ExploreVsExploit(curr_state)
 
                         ## take action
-                        new_raw_obs, reward, terminated, truncated, info = self.my_env.step(curr_action)
+                        new_raw_obs, reward, terminated, truncated, info = self.Preprocessor.step_with_skip(
+                            self.my_env, curr_action
+                        )
 
                         alive = info["lives"] != 0
 
@@ -239,8 +242,7 @@ class SpaceInvaderAgent:
                         episode_reward += reward
 
                         ## create new sequence with new frame
-                        curr_state, _ = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
-                        curr_raw_obs = new_raw_obs
+                        curr_state, _ = self.Preprocessor.new_state(new_raw_obs, curr_state)
 
                     self.eval_rewards.append(episode_reward)
                     self.export_as_gif(self.frames_for_gif, "eval_" + str(num_of_ep) + "_" + str(episode_reward) + ".gif")

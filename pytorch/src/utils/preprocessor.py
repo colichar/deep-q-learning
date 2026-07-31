@@ -1,44 +1,74 @@
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchvision.transforms.v2 import Resize
 from torch import cat, tensor
-from numpy import array, maximum
+from numpy import maximum
 from numpy.random import randint
 
 
 class Preprocessor:
     """
-    Takes care of preprocessing frames of the game for the models.
+    Takes care of frame-skipping and preprocessing frames of the game for the models.
     """
 
-    def __init__(self, height: int = 84, width: int = 84):
+    def __init__(self, height: int = 84, width: int = 84, frame_skip: int = 4):
         self.height = height
         self.width = width
+        self.frame_skip = frame_skip
+
+    def step_with_skip(self, env, action, skip=None):
+        """
+        Repeats `action` for `skip` real ALE frames (or until the episode truly
+        ends partway through), accumulating reward. Returns a single
+        flicker-reduced observation built from the max of the last two real
+        frames actually taken - the DeepMind papers' frame-skip + flicker-removal
+        pairing, which needs the two frames being maxed to be adjacent. Requires
+        the env itself to be created with `frameskip=1` (no internal ALE skipping).
+        """
+        skip = self.frame_skip if skip is None else skip
+
+        total_reward = 0.0
+        frames = []
+        terminated = truncated = False
+        info = {}
+
+        for _ in range(skip):
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+            frames.append(obs)
+            if terminated or truncated:
+                break
+
+        if len(frames) == 1:
+            # episode ended on the very first frame of this group - nothing to
+            # pair, so max() against itself is a no-op.
+            frames.append(frames[0])
+
+        maxed_obs = maximum(frames[-2], frames[-1])
+
+        return maxed_obs, total_reward, terminated, truncated, info
 
     def initialize_state(self, env):
         """
-        Initializes the first state of an episode with the first 4 frames.
+        Initializes the first state of an episode with the first 4 flicker-
+        reduced frames.
 
-        Takes a randomized number of no-op actions first, so each episode starts
-        from a different point in the game's otherwise-fixed opening sequence
-        instead of always the same frame, then builds the initial 4-frame state
-        from the last 5 resulting raw frames.
+        Takes a randomized number of no-op frame-skip groups first, so each
+        episode starts from a different point in the game's otherwise-fixed
+        opening sequence instead of always the same frame.
         """
         env.reset()
-        n_noops = randint(5, 31)
-        steps = [env.step(0) for _ in range(n_noops)]
-        raw_frames = [step[0] for step in steps][-5:]
-        info = steps[-1][4]
-        processed_frames = [self.preprocess_frame(raw_frames[idx], raw_frames[idx + 1]) for idx in range(4)]
+        n_groups = randint(4, 31)
 
-        return cat(processed_frames, axis=0), raw_frames[-1], info
+        maxed_frames = []
+        info = {}
+        for _ in range(n_groups):
+            maxed_obs, _, _, _, info = self.step_with_skip(env, action=0)
+            maxed_frames.append(maxed_obs)
 
-    def encode_frames(self,
-                      new_raw_obs,
-                      old_raw_obs,
-                      ):
-        """Encodes two consecutive frames in such a manner to remove the flickering of projectiles."""
+        maxed_frames = maxed_frames[-4:]
+        processed_frames = [self.preprocess_frame(frame) for frame in maxed_frames]
 
-        return maximum(old_raw_obs, new_raw_obs)
+        return cat(processed_frames, axis=0), info
 
     def crop_frame(self,
                    frame,
@@ -52,31 +82,25 @@ class Preprocessor:
 
         return cropped_frame
 
-    def preprocess_frame(self,
-                         new_raw_obs,
-                         old_raw_obs,
-                         ):
+    def preprocess_frame(self, raw_obs):
         """
-        Preprocesses one frame for the model.
+        Preprocesses one (already flicker-reduced) raw frame for the model.
         """
 
-        processed_fr = tensor(self.encode_frames(old_raw_obs, new_raw_obs))
+        processed_fr = tensor(raw_obs)
         processed_fr = rgb_to_grayscale(processed_fr.permute(2, 0, 1))
         processed_fr = self.crop_frame(processed_fr)
         processed_fr = Resize(size=(self.height, self.width))(processed_fr)
 
         return processed_fr
 
-    def new_state(self,
-                  new_raw_obs,
-                  old_raw_obs,
-                  old_state
-                  ):
+    def new_state(self, new_raw_obs, old_state):
         """
-        Creates a new state from an old state and a new raw frame. Also returns the
-        single new frame on its own, so it can be stored directly in the replay memory.
+        Creates a new state from an old state and a new (already flicker-reduced)
+        raw frame. Also returns the single new frame on its own, so it can be
+        stored directly in the replay memory.
         """
-        processed_fr = self.preprocess_frame(new_raw_obs, old_raw_obs)
+        processed_fr = self.preprocess_frame(new_raw_obs)
         new_stacked_state = cat([old_state[1:, ::, ::], processed_fr], axis=0)
 
         return new_stacked_state, processed_fr.squeeze(0)

@@ -19,3 +19,4 @@ kaggle
 images
 *.prof
 .pytest_cache
+pytorch/scripts/output
