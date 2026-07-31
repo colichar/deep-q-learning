@@ -1,3 +1,6 @@
+import os
+
+import numpy as np
 from numpy import zeros, uint8, int64, float32, bool_, stack
 from numpy.random import randint
 from torch import from_numpy
@@ -101,7 +104,40 @@ class ReplayMemory:
         )
 
     def save_replay_memory(self, path):
-        raise NotImplementedError("Replay memory persistence is being reworked for the new buffer format.")
+        """
+        Saves the buffer arrays and write position to `path/replay_memory.npz`.
+        """
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        np.savez(
+            os.path.join(path, "replay_memory.npz"),
+            frames=self.frames,
+            actions=self.actions,
+            rewards=self.rewards,
+            terminal=self.terminal,
+            idx=self.idx,
+            count=self.count,
+        )
 
     def load_replay_memory(self, path):
-        raise NotImplementedError("Replay memory persistence is being reworked for the new buffer format.")
+        """
+        Restores the buffer arrays and write position from `path/replay_memory.npz`.
+        """
+        file_path = os.path.join(path, "replay_memory.npz")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"No replay memory found at '{file_path}'.")
+
+        data = np.load(file_path)
+        if data["frames"].shape != self.frames.shape:
+            raise ValueError(
+                f"Loaded replay memory shape {data['frames'].shape} doesn't match "
+                f"this buffer's configured shape {self.frames.shape}."
+            )
+
+        self.frames = data["frames"]
+        self.actions = data["actions"]
+        self.rewards = data["rewards"]
+        self.terminal = data["terminal"]
+        self.idx = int(data["idx"])
+        self.count = int(data["count"])

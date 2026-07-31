@@ -9,6 +9,7 @@ from torchvision.transforms import Resize
 from numpy import mean, random, uint8, array
 import matplotlib.pyplot as plt
 from PIL import Image
+import glob
 import os
 import pickle
 
@@ -346,8 +347,12 @@ class SpaceInvaderAgent:
         if not os.path.exists(path):
             raise FileNotFoundError(f"Folder '{path}' does not exist.")
 
+        matches = glob.glob(os.path.join(path, 'train_history_*'))
+        if not matches:
+            raise FileNotFoundError(f"No train_history_* file found in '{path}'.")
+
         train_history = {}
-        with open(path + '/train_history', 'rb') as file:
+        with open(matches[0], 'rb') as file:
             train_history = pickle.load(file)
 
         print(train_history.keys())
