@@ -2,6 +2,7 @@ from torchvision.transforms.functional import rgb_to_grayscale
 from torchvision.transforms.v2 import Resize
 from torch import cat, tensor
 from numpy import array, maximum
+from numpy.random import randint
 
 
 class Preprocessor:
@@ -16,10 +17,16 @@ class Preprocessor:
     def initialize_state(self, env):
         """
         Initializes the first state of an episode with the first 4 frames.
+
+        Takes a randomized number of no-op actions first, so each episode starts
+        from a different point in the game's otherwise-fixed opening sequence
+        instead of always the same frame, then builds the initial 4-frame state
+        from the last 5 resulting raw frames.
         """
         env.reset()
-        actions = [env.action_space.sample() for i in range(5)]
-        raw_frames = [env.step(action)[0] for action in actions]
+        n_noops = randint(5, 31)
+        raw_frames = [env.step(0)[0] for _ in range(n_noops)]
+        raw_frames = raw_frames[-5:]
         processed_frames = [self.preprocess_frame(raw_frames[idx], raw_frames[idx + 1]) for idx in range(4)]
 
         return cat(processed_frames, axis=0), raw_frames[-1]
