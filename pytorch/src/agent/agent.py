@@ -6,6 +6,7 @@ import gymnasium as gym
 import ale_py
 from torch import where, max, no_grad, tensor
 from torchvision.transforms import Resize
+import numpy as np
 from numpy import mean, random, uint8, array
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -207,37 +208,43 @@ class SpaceInvaderAgent:
         self.frames_for_gif = []
         num_of_ep = 1
 
-        with no_grad():
-            ## start outer loop of the number of episode we'll train the model for
-            for episode in range(eval_episodes):
+        was_evaluation = self.ExploreVsExploit.evaluation
+        self.ExploreVsExploit.evaluation = True
 
-                episode_reward = 0
-                alive = True
+        try:
+            with no_grad():
+                ## start outer loop of the number of episode we'll train the model for
+                for episode in range(eval_episodes):
 
-                ## initialise first sequence of new episode
-                curr_state, curr_raw_obs = self.Preprocessor.initialize_state(self.my_env)
+                    episode_reward = 0
+                    alive = True
 
-                while alive:
-                    ## choose an exploration/explotation action
-                    curr_action = self.ExploreVsExploit(curr_state)
+                    ## initialise first sequence of new episode
+                    curr_state, curr_raw_obs = self.Preprocessor.initialize_state(self.my_env)
 
-                    ## take action
-                    new_raw_obs, reward, terminated, truncated, info = self.my_env.step(curr_action)
+                    while alive:
+                        ## choose an exploration/explotation action
+                        curr_action = self.ExploreVsExploit(curr_state)
 
-                    alive = info["lives"] != 0
+                        ## take action
+                        new_raw_obs, reward, terminated, truncated, info = self.my_env.step(curr_action)
 
-                    self.frames_for_gif.append(new_raw_obs)
+                        alive = info["lives"] != 0
 
-                    episode_reward += reward
+                        self.frames_for_gif.append(new_raw_obs)
 
-                    ## create new sequence with new frame
-                    curr_state, _ = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
-                    curr_raw_obs = new_raw_obs
+                        episode_reward += reward
 
-                self.eval_rewards.append(episode_reward)
-                self.export_as_gif(self.frames_for_gif, "eval_" + str(num_of_ep) + "_" + str(episode_reward) + ".gif")
-                self.frames_for_gif = []
-                num_of_ep += 1
+                        ## create new sequence with new frame
+                        curr_state, _ = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
+                        curr_raw_obs = new_raw_obs
+
+                    self.eval_rewards.append(episode_reward)
+                    self.export_as_gif(self.frames_for_gif, "eval_" + str(num_of_ep) + "_" + str(episode_reward) + ".gif")
+                    self.frames_for_gif = []
+                    num_of_ep += 1
+        finally:
+            self.ExploreVsExploit.evaluation = was_evaluation
 
         return self.eval_rewards
 
