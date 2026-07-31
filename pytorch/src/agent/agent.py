@@ -75,13 +75,13 @@ class ExplorationVsExploitation:
 class SpaceInvaderAgent:
     def __init__(
             self,
-            learning_rate=0.001,
+            learning_rate=0.00025,
             memory_size=10 ** 6,
-            memory_warmup=0.5 * 10 ** 4,  # 20,
-            batch_size=64,  # 5
+            memory_warmup=50_000,
+            batch_size=32,
             max_train_frames=0.6 * 10 ** 4,  # 400
             update_main_freq=4,
-            update_target_freq=0.25 * 10 ** 4,  # 25,
+            update_target_freq=10_000,
             log_freq=0.2 * 10 ** 4,
             average_loss_freq=400,  # 20
             discount=0.99
