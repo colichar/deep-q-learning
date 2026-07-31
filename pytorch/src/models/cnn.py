@@ -1,6 +1,7 @@
 from torch.nn import Module, Conv2d, Linear
 from torch.nn.functional import relu, huber_loss
-from torch import max, argmax, save, load
+from torch import max, argmax, save, load, device as torch_device
+from torch.cuda import is_available
 from torch.optim import Adam
 
 import os
@@ -11,14 +12,17 @@ class CNNModelPY(Module):
     Implementation of a CNN model to be used by the DQN Agent.
     """
 
-    def __init__(self, n_actions: int, learning_rate: float = 0.001, state_shape: tuple = (84, 84, 4)):
+    def __init__(self, n_actions: int, learning_rate: float = 0.001, state_shape: tuple = (84, 84, 4), device=None):
         super(CNNModelPY, self).__init__()
 
         self.n_actions = n_actions
         self.learning_rate = learning_rate
         self.state_shape = state_shape
+        self.device = device if device is not None else torch_device("cuda" if is_available() else "cpu")
 
         self.init_model()
+        # Move params to device before constructing the optimizer
+        self.to(self.device)
         self.optimizer = Adam(self.parameters(), lr=learning_rate)
 
     def custom_huber_loss(self, y_pred, y_true):
@@ -96,6 +100,6 @@ class CNNModelPY(Module):
             raise FileNotFoundError(f"Folder '{path}' does not exist.")
 
         # Load the saved model and optimizer states
-        checkpoint = load(path + '/model.pth')
+        checkpoint = load(path + '/model.pth', map_location=self.device)
         self.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

@@ -4,7 +4,8 @@ from src.models.cnn import CNNModelPY
 
 import gymnasium as gym
 import ale_py
-from torch import where, max, no_grad, tensor
+from torch import where, max, no_grad, tensor, device as torch_device
+from torch.cuda import is_available
 from torchvision.transforms import Resize
 import numpy as np
 from numpy import mean, random, uint8, array
@@ -67,8 +68,10 @@ class ExplorationVsExploitation:
             return random.randint(self.n_actions)
         else:
             # we choose the action yielding the highest reward according to our main model
-            model_prediction = self.dqn_model.best_action(curr_state.float().unsqueeze(0))
-            model_prediction = int(model_prediction[0].numpy())
+            model_prediction = self.dqn_model.best_action(
+                curr_state.float().unsqueeze(0).to(self.dqn_model.device)
+            )
+            model_prediction = int(model_prediction[0].cpu().numpy())
             return model_prediction
 
 
@@ -100,8 +103,10 @@ class SpaceInvaderAgent:
         self.log_freq = log_freq
         self.discount = discount
 
-        self.MainModel = CNNModelPY(self.my_env.action_space.n, learning_rate)
-        self.TargetModel = CNNModelPY(self.my_env.action_space.n)
+        self.device = torch_device("cuda" if is_available() else "cpu")
+
+        self.MainModel = CNNModelPY(self.my_env.action_space.n, learning_rate, device=self.device)
+        self.TargetModel = CNNModelPY(self.my_env.action_space.n, device=self.device)
         self.TargetModel.set_weights(self.MainModel.get_weights())
 
         self.Preprocessor = Preprocessor()
@@ -123,9 +128,12 @@ class SpaceInvaderAgent:
         # Extract individual components from minibatch
         curr_states, new_states, curr_actions, rewards, terminal_mask = minibatch
 
-        # States are stored as uint8 in the replay memory; cast to float for the model
-        curr_states = curr_states.float()
-        new_states = new_states.float()
+        # Replay memory lives on host RAM regardless of device (only the sampled
+        # batch needs to move); states are stored as uint8, cast to float for the model.
+        curr_states = curr_states.float().to(self.device)
+        new_states = new_states.float().to(self.device)
+        rewards = rewards.to(self.device)
+        terminal_mask = terminal_mask.to(self.device)
 
         # Calculate Q values for non-terminal transitions
         with no_grad():
