@@ -153,7 +153,8 @@ class SpaceInvaderAgent:
         while (frame_num <= self.max_train_frames + self.start_frame_num):
             episode_reward = 0
 
-            curr_state, curr_raw_obs = self.Preprocessor.initialize_state(self.my_env)
+            curr_state, curr_raw_obs, info = self.Preprocessor.initialize_state(self.my_env)
+            prev_lives = info["lives"]
             alive = True
 
             while alive:
@@ -163,6 +164,8 @@ class SpaceInvaderAgent:
                 new_raw_obs, reward, terminated, truncated, info = self.my_env.step(curr_action)
 
                 alive = info["lives"] != 0
+                life_lost = info["lives"] < prev_lives
+                prev_lives = info["lives"]
 
                 episode_reward += reward
 
@@ -172,7 +175,7 @@ class SpaceInvaderAgent:
                 new_state, new_frame = self.Preprocessor.new_state(new_raw_obs, curr_raw_obs, curr_state)
 
                 # store new frame
-                self.ReplayMemory.add_frame(new_frame, curr_action, reward, terminal=not alive)
+                self.ReplayMemory.add_frame(new_frame, curr_action, reward, terminal=life_lost or not alive)
 
                 # perform weights update for main model
                 if frame_num % self.update_main_freq == 0 and frame_num > self.memory_warmup:
@@ -220,7 +223,7 @@ class SpaceInvaderAgent:
                     alive = True
 
                     ## initialise first sequence of new episode
-                    curr_state, curr_raw_obs = self.Preprocessor.initialize_state(self.my_env)
+                    curr_state, curr_raw_obs, _ = self.Preprocessor.initialize_state(self.my_env)
 
                     while alive:
                         ## choose an exploration/explotation action

@@ -25,11 +25,12 @@ class Preprocessor:
         """
         env.reset()
         n_noops = randint(5, 31)
-        raw_frames = [env.step(0)[0] for _ in range(n_noops)]
-        raw_frames = raw_frames[-5:]
+        steps = [env.step(0) for _ in range(n_noops)]
+        raw_frames = [step[0] for step in steps][-5:]
+        info = steps[-1][4]
         processed_frames = [self.preprocess_frame(raw_frames[idx], raw_frames[idx + 1]) for idx in range(4)]
 
-        return cat(processed_frames, axis=0), raw_frames[-1]
+        return cat(processed_frames, axis=0), raw_frames[-1], info
 
     def encode_frames(self,
                       new_raw_obs,
