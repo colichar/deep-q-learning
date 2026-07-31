@@ -5,8 +5,6 @@ description = "Deep Q-Learning agent for Atari Space Invaders (PyTorch)"
 requires-python = ">=3.12"
 dependencies = [
     "numpy",
-    "torch",
-    "torchvision",
     "pillow",
     "gymnasium",
     "ale-py",
@@ -14,18 +12,43 @@ dependencies = [
     "matplotlib>=3.11.1",
 ]
 
-# This laptop has no NVIDIA GPU; torch's default PyPI wheel bundles the full CUDA
-# runtime (~2.5GB of nvidia-* packages) which isn't needed here and was causing
-# repeated download timeouts. Pin to the CPU-only wheel index instead (~200MB).
-# On the training PC (with an actual NVIDIA GPU), drop this override so torch
-# resolves to the default CUDA-enabled wheel - see plans/uv-usage.md.
+# torch/torchvision are picked per-machine via an extra, since CPU-only machines and
+# machines with an NVIDIA GPU need different wheel builds:
+#   CPU-only: uv sync --extra cpu
+#   NVIDIA GPU: uv sync --extra cuda
+# See README.md.
+[project.optional-dependencies]
+cpu = ["torch", "torchvision"]
+cuda = ["torch", "torchvision"]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+    ],
+]
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# CUDA 12.6 wheels - broadly compatible with recent NVIDIA GPUs/drivers.
+# Bump the tag here (e.g. cu130) if a newer CUDA toolkit is ever needed.
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [dependency-groups]

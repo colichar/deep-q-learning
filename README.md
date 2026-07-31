@@ -1,5 +1,81 @@
 # Deep-Q-Learning
 
+## Setup
+
+The `.venv` (Python 3.12) and `pyproject.toml`/`uv.lock` are managed with [uv](https://docs.astral.sh/uv/) instead of `pip`/`requirements.txt`.
+
+### Everyday commands
+
+- `uv sync --extra <cpu|cuda>` — install/update `.venv` to match `pyproject.toml` + `uv.lock` for the given machine (see "CPU vs GPU torch" below — torch is an optional extra, not a base dependency, so **always pass `--extra`**). Run this after pulling changes that touch dependencies.
+- `uv add <package>` — add a new dependency (edits `pyproject.toml`, re-resolves `uv.lock`, installs it). Don't run two `uv add`/`uv sync` at once in the same repo — they race on `pyproject.toml`/`uv.lock`.
+- `uv run <command>` — run a command inside `.venv` without manually activating it, e.g. `uv run pytest`. Unlike `uv sync`, its implicit sync defaults to `--inexact` (won't uninstall an already-installed extra just because `--extra` was omitted) — but it also won't *install* torch for you the first time, so still sync explicitly at least once per machine.
+
+### CPU vs GPU torch
+
+`torch`'s default PyPI wheel on Linux bundles the full CUDA runtime (~2.5GB of `nvidia-*` packages) — unnecessary on a CPU-only machine but exactly what's needed on a machine with an NVIDIA GPU. `torch`/`torchvision` are declared as two mutually-exclusive optional extras instead of plain base dependencies, each pointing at a different wheel index:
+
+```toml
+[project.optional-dependencies]
+cpu = ["torch", "torchvision"]
+cuda = ["torch", "torchvision"]
+
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+```
+
+- **CPU-only machine**: `uv sync --extra cpu` (~200MB).
+- **Machine with an NVIDIA GPU**: `uv sync --extra cuda` — resolves `torch==2.13.0+cu126` and pulls in the matching `cuda-toolkit`/`cuda-bindings` runtime deps. After syncing, verify with `uv run python -c "import torch; print(torch.cuda.is_available())"` — should print `True` if the NVIDIA driver is set up correctly. Bump the `cu126` tag in the `pytorch-cuda` index URL (e.g. `cu130`) if a newer CUDA toolkit is ever needed — check available tags at `https://download.pytorch.org/whl/<tag>/torch/`.
+
+**Footgun:** a bare `uv sync` (no `--extra`) treats torch/torchvision as extraneous and **uninstalls them**, since `uv sync` defaults to an exact sync and neither extra is enabled by default. Always pass `--extra cpu` or `--extra cuda`.
+
+### Atari ROMs
+
+`ale-py` needs the Space Invaders ROM, which isn't bundled — fetch it once per machine with:
+
+```
+uv run AutoROM --accept-license -y
+```
+
+This downloads to `.venv/lib/python3.12/site-packages/ale_py/roms/` and only needs to be re-run if `.venv` is recreated.
+
+### gym → gymnasium
+
+Current `ale-py` (0.12.x) dropped support for the legacy `gym` package and only registers environments with `gymnasium`. `pytorch/src/agent/agent.py` uses `import gymnasium as gym` + `gym.register_envs(ale_py)` accordingly — the older `import gym` (with `gym==0.26.2`/`ale-py==0.8.1`, as used by the TensorFlow implementation in `src/`) doesn't have wheels for Python 3.12.
+
+### Tests
+
+Tests live in `pytorch/tests/` and run with `pytest` (a dev-only dependency — `uv add --dev <package>` to add more, they're kept out of the runtime `dependencies` list). `pyproject.toml`'s `[tool.pytest.ini_options]` puts `pytorch/` on the path so `from src....` imports resolve without a `conftest.py`. Unit and integration tests are split into separate directories, and the integration ones also carry an `integration` marker:
+
+- `pytorch/tests/unit/` (`test_replay_memory.py`) — fast, no gym env or real training involved.
+- `pytorch/tests/integration/` (`test_agent.py`) — spins up the real ALE env and runs actual (small-scale) training/save/load, so slower.
+
+```
+uv run pytest                              # run everything
+uv run pytest pytorch/tests/unit           # unit tests only, by directory
+uv run pytest -m "not integration"         # unit tests only, by marker
+uv run pytest pytorch/tests/integration    # integration tests only, by directory
+uv run pytest -m integration               # integration tests only, by marker
+```
 
 ## Results of first training
 
