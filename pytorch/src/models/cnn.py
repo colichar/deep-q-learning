@@ -30,7 +30,7 @@ class CNNModelPY(Module):
         This is a customized huber loss. The model output y_pred needs to be processed with one further step so
         the loss function can be computed.
         """
-        # Calculate Huber loss using the maximum predicted Q-value
+        # Calculate Huber loss using the taken action's predicted Q-value
         loss = huber_loss(y_pred, y_true)
         return loss
 

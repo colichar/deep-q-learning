@@ -4,7 +4,7 @@ from src.models.cnn import CNNModelPY
 
 import gymnasium as gym
 import ale_py
-from torch import where, max, no_grad, tensor, device as torch_device
+from torch import where, no_grad, tensor, device as torch_device
 from torch.cuda import is_available
 from torchvision.transforms import Resize
 import numpy as np
@@ -132,6 +132,7 @@ class SpaceInvaderAgent:
         # batch needs to move); states are stored as uint8, cast to float for the model.
         curr_states = curr_states.float().to(self.device)
         new_states = new_states.float().to(self.device)
+        curr_actions = curr_actions.to(self.device)
         rewards = rewards.to(self.device)
         terminal_mask = terminal_mask.to(self.device)
 
@@ -145,7 +146,7 @@ class SpaceInvaderAgent:
         target_q = where(terminal_mask, rewards, target_q)
 
         predictions = self.MainModel(curr_states)
-        selected_q_values = max(predictions, axis=1)[0]
+        selected_q_values = predictions.gather(1, curr_actions.long().unsqueeze(1)).squeeze(1)
 
         loss = self.MainModel.custom_huber_loss(target_q, selected_q_values)
 
