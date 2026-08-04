@@ -3,6 +3,8 @@ Integration tests for SpaceInvaderAgent: real gym/ALE env, real model, real file
 Slower than the ReplayMemory unit tests - run with `uv run pytest -m integration`
 or skip with `uv run pytest -m "not integration"`.
 """
+import os
+
 import numpy as np
 import pytest
 
@@ -47,6 +49,25 @@ def test_training_writes_metrics_csvs_incrementally(tmp_path):
     loss_rows = losses_csv.read_text().splitlines()
     assert loss_rows[0] == "frame_num,avg_loss"
     assert len(loss_rows) > 1
+
+
+def test_train_writes_periodic_checkpoint_resumable(tmp_path):
+    checkpoint_path = tmp_path / "checkpoint"
+    agent = SpaceInvaderAgent(**AGENT_KWARGS, checkpoint_freq=250, checkpoint_path=str(checkpoint_path))
+    agent.train()
+
+    # A checkpoint should have been written mid-run (well before the run finished at frame 600),
+    # without needing an explicit agent.save() call after train() returns.
+    assert os.path.exists(checkpoint_path / "model" / "model.pth")
+
+    resumed = SpaceInvaderAgent(**AGENT_KWARGS)
+    resumed.load(str(checkpoint_path))
+
+    assert 0 < resumed.start_frame_num < agent.max_train_frames
+
+    # Resuming from the mid-run checkpoint should continue training without error.
+    resumed.train()
+    assert len(resumed.rewards) > 0
 
 
 def test_agent_resumes_from_saved_checkpoint(tmp_path):
