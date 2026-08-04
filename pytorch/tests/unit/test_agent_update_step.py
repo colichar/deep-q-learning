@@ -72,7 +72,9 @@ def test_update_step_uses_taken_action_q_value_not_max():
     assert not torch.isclose(loss, wrong_loss)
 
 
-def test_update_step_moves_actions_to_device():
+def test_update_step_selects_taken_action_with_single_sample_batch():
+    # Same gather-vs-max check as above, but with a batch size of 1, where a
+    # squeeze/unsqueeze shape mistake would be most likely to slip through.
     main_predictions = torch.tensor([[1.0, 5.0]], requires_grad=True)
     target_predictions = torch.zeros(1, 2)
     curr_actions = torch.tensor([1], dtype=torch.int64)
@@ -81,8 +83,6 @@ def test_update_step_moves_actions_to_device():
 
     agent = _make_agent(main_predictions, target_predictions, curr_actions, rewards, terminal_mask)
 
-    # Should not raise even though curr_actions starts off-device-agnostic; update_step
-    # is responsible for moving it to self.device before it's used in gather().
     loss = agent.update_step()
 
     expected_loss = torch.nn.functional.huber_loss(rewards, torch.tensor([5.0]))
