@@ -3,8 +3,6 @@ Integration tests for SpaceInvaderAgent: real gym/ALE env, real model, real file
 Slower than the ReplayMemory unit tests - run with `uv run pytest -m integration`
 or skip with `uv run pytest -m "not integration"`.
 """
-import os
-
 import numpy as np
 import pytest
 
@@ -58,14 +56,27 @@ def test_train_writes_periodic_checkpoint_resumable(tmp_path):
 
     # A checkpoint should have been written mid-run (well before the run finished at frame 600),
     # without needing an explicit agent.save() call after train() returns.
-    assert os.path.exists(checkpoint_path / "model" / "model.pth")
+    history_dir = checkpoint_path / "history"
+    mid_run_files = list(history_dir.glob("train_history_*"))
+    assert len(mid_run_files) == 1
+    mid_run_frame = int(mid_run_files[0].name.rsplit("_", 1)[-1])
+    assert 0 < mid_run_frame < agent.max_train_frames
+
+    # Mirror train.py's final `agent.save()` call after train() returns. train_history_* files
+    # are never overwritten (the frame number is part of the filename), so this leaves a second,
+    # newer file on disk alongside the mid-run checkpoint's - exactly the scenario
+    # load_train_history's "pick the latest" logic exists for.
+    agent.save(str(checkpoint_path))
+    assert len(list(history_dir.glob("train_history_*"))) > 1
 
     resumed = SpaceInvaderAgent(**AGENT_KWARGS)
     resumed.load(str(checkpoint_path))
 
-    assert 0 < resumed.start_frame_num < agent.max_train_frames
+    # Resuming should pick up the latest checkpoint, not the earlier mid-run one.
+    assert resumed.start_frame_num == agent.frame_nums[-1]
+    assert resumed.start_frame_num > mid_run_frame
 
-    # Resuming from the mid-run checkpoint should continue training without error.
+    # Resuming from the checkpoint should continue training without error.
     resumed.train()
     assert len(resumed.rewards) > 0
 
