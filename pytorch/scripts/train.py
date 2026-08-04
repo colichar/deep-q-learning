@@ -47,6 +47,8 @@ def parse_args():
                          help="Path to save the checkpoint to after training.")
     parser.add_argument("--metrics-dir", type=str, default="pytorch/scripts/output/metrics",
                          help="Directory to write episodes.csv/losses.csv to incrementally during training.")
+    parser.add_argument("--checkpoint-freq", type=int, default=25_000,
+                         help="Save a checkpoint to --save-path every N frames during training.")
 
     return parser.parse_args()
 
@@ -66,6 +68,8 @@ def main():
         average_loss_freq=args.average_loss_freq,
         discount=args.discount,
         metrics_dir=args.metrics_dir,
+        checkpoint_freq=args.checkpoint_freq,
+        checkpoint_path=args.save_path,
     )
 
     print(f"Using device: {agent.device}")

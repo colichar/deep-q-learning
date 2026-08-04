@@ -49,6 +49,32 @@ def test_training_writes_metrics_csvs_incrementally(tmp_path):
     assert len(loss_rows) > 1
 
 
+def test_train_writes_periodic_checkpoint_resumable(tmp_path):
+    checkpoint_path = tmp_path / "checkpoint"
+    agent = SpaceInvaderAgent(**AGENT_KWARGS, checkpoint_freq=250, checkpoint_path=str(checkpoint_path))
+    agent.train()
+
+    # proves checkpointing fired on its own mid-run, without an explicit agent.save() call
+    history_dir = checkpoint_path / "history"
+    mid_run_files = list(history_dir.glob("train_history_*"))
+    assert len(mid_run_files) == 1
+    mid_run_frame = int(mid_run_files[0].name.rsplit("_", 1)[-1])
+    assert 0 < mid_run_frame < agent.max_train_frames
+
+    # mirrors train.py's final save(), reproducing the multi-file case load_train_history handles
+    agent.save(str(checkpoint_path))
+    assert len(list(history_dir.glob("train_history_*"))) > 1
+
+    resumed = SpaceInvaderAgent(**AGENT_KWARGS)
+    resumed.load(str(checkpoint_path))
+
+    assert resumed.start_frame_num == agent.frame_nums[-1]
+    assert resumed.start_frame_num > mid_run_frame
+
+    resumed.train()
+    assert len(resumed.rewards) > 0
+
+
 def test_agent_resumes_from_saved_checkpoint(tmp_path):
     agent = SpaceInvaderAgent(**AGENT_KWARGS)
     agent.train()

@@ -94,7 +94,9 @@ class SpaceInvaderAgent:
             log_freq=0.2 * 10 ** 4,
             average_loss_freq=400,  # 20
             discount=0.99,
-            metrics_dir=None,  # if set, CSV metrics are written incrementally during train()
+            metrics_dir=None,
+            checkpoint_freq=25_000,
+            checkpoint_path=None,
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
@@ -110,6 +112,8 @@ class SpaceInvaderAgent:
         self.log_freq = log_freq
         self.discount = discount
         self.metrics_dir = metrics_dir
+        self.checkpoint_freq = checkpoint_freq
+        self.checkpoint_path = checkpoint_path
 
         self.device = torch_device("cuda" if is_available() else "cpu")
 
@@ -232,6 +236,10 @@ class SpaceInvaderAgent:
                         print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
                         if loss_csv_path:
                             self._append_csv_row(loss_csv_path, [frame_num, self.averaged_losses[-1]])
+
+                if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
+                    print(f"Checkpointing at frame {frame_num}...")
+                    self.save(self.checkpoint_path)
 
                 curr_state = new_state
                 frame_num += 1
@@ -419,8 +427,11 @@ class SpaceInvaderAgent:
         if not matches:
             raise FileNotFoundError(f"No train_history_* file found in '{path}'.")
 
+        # filename embeds the frame number, not a fixed name, so repeated saves accumulate here
+        latest_match = max(matches, key=lambda p: int(p.rsplit('_', 1)[-1]))
+
         train_history = {}
-        with open(matches[0], 'rb') as file:
+        with open(latest_match, 'rb') as file:
             train_history = pickle.load(file)
 
         print(train_history.keys())
