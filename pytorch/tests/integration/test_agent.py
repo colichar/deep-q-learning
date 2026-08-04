@@ -30,6 +30,25 @@ def test_training_runs_end_to_end():
     assert len(agent.rewards) > 0
 
 
+def test_training_writes_metrics_csvs_incrementally(tmp_path):
+    metrics_dir = tmp_path / "metrics"
+    agent = SpaceInvaderAgent(**AGENT_KWARGS, metrics_dir=str(metrics_dir))
+    agent.train()
+
+    episodes_csv = metrics_dir / "episodes.csv"
+    losses_csv = metrics_dir / "losses.csv"
+    assert episodes_csv.exists()
+    assert losses_csv.exists()
+
+    episode_rows = episodes_csv.read_text().splitlines()
+    assert episode_rows[0] == "frame_num,episode_num,episode_reward,epsilon,wall_clock_elapsed_seconds"
+    assert len(episode_rows) > 1
+
+    loss_rows = losses_csv.read_text().splitlines()
+    assert loss_rows[0] == "frame_num,avg_loss"
+    assert len(loss_rows) > 1
+
+
 def test_agent_resumes_from_saved_checkpoint(tmp_path):
     agent = SpaceInvaderAgent(**AGENT_KWARGS)
     agent.train()
