@@ -45,6 +45,8 @@ def parse_args():
                          help="Path to a checkpoint directory to resume training from.")
     parser.add_argument("--save-path", type=str, default="pytorch/scripts/output",
                          help="Path to save the checkpoint to after training.")
+    parser.add_argument("--metrics-dir", type=str, default="pytorch/scripts/output/metrics",
+                         help="Directory to write episodes.csv/losses.csv to incrementally during training.")
 
     return parser.parse_args()
 
@@ -63,6 +65,7 @@ def main():
         log_freq=args.log_freq,
         average_loss_freq=args.average_loss_freq,
         discount=args.discount,
+        metrics_dir=args.metrics_dir,
     )
 
     print(f"Using device: {agent.device}")

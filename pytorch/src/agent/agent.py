@@ -11,9 +11,11 @@ import numpy as np
 from numpy import mean, random, uint8, array
 import matplotlib.pyplot as plt
 from PIL import Image
+import csv
 import glob
 import os
 import pickle
+import time
 
 gym.register_envs(ale_py)
 
@@ -48,20 +50,24 @@ class ExplorationVsExploitation:
 
         self.evaluation = evaluation
 
+    def get_epsilon(self, frame_num: int = 0) -> float:
+        """Returns the current epsilon value for the given frame number, without taking an action."""
+        if self.evaluation:
+            return 0
+        elif frame_num <= self.start_fr:
+            return self.eps_initial
+        elif self.start_fr < frame_num < self.end_fr:
+            return self.slope * frame_num + self.intercept
+        else:
+            return self.eps_final
+
     def __call__(self, curr_state, frame_num: int = 0) -> int:
         """
         When the object is called, it will return an action to be performed by the agent.
         This action will either be an exploration of new possibilities or and exploitation
         of the accumulated experience of the agent.
         """
-        if self.evaluation:
-            eps = 0
-        elif frame_num <= self.start_fr:
-            eps = self.eps_initial
-        elif self.start_fr < frame_num < self.end_fr:
-            eps = self.slope * frame_num + self.intercept
-        elif frame_num >= self.end_fr:
-            eps = self.eps_final
+        eps = self.get_epsilon(frame_num)
 
         if random.random() < eps:
             # we explore
@@ -87,7 +93,8 @@ class SpaceInvaderAgent:
             update_target_freq=10_000,
             log_freq=0.2 * 10 ** 4,
             average_loss_freq=400,  # 20
-            discount=0.99
+            discount=0.99,
+            metrics_dir=None,  # if set, CSV metrics are written incrementally during train()
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
@@ -102,6 +109,7 @@ class SpaceInvaderAgent:
         self.average_loss_freq = average_loss_freq
         self.log_freq = log_freq
         self.discount = discount
+        self.metrics_dir = metrics_dir
 
         self.device = torch_device("cuda" if is_available() else "cpu")
 
@@ -157,6 +165,21 @@ class SpaceInvaderAgent:
         return loss
 
     def train(self):
+        episode_csv_path = None
+        loss_csv_path = None
+        if self.metrics_dir:
+            os.makedirs(self.metrics_dir, exist_ok=True)
+            episode_csv_path = os.path.join(self.metrics_dir, "episodes.csv")
+            loss_csv_path = os.path.join(self.metrics_dir, "losses.csv")
+            self._init_metrics_csv(
+                episode_csv_path,
+                ["frame_num", "episode_num", "episode_reward", "epsilon", "wall_clock_elapsed_seconds"]
+            )
+            self._init_metrics_csv(loss_csv_path, ["frame_num", "avg_loss"])
+
+        start_time = time.time()
+        episode_num = len(self.rewards)
+
         frame_num = self.start_frame_num + 1
 
         while (frame_num <= self.max_train_frames + self.start_frame_num):
@@ -207,6 +230,8 @@ class SpaceInvaderAgent:
 
                     if frame_num % self.log_freq == 0:
                         print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
+                        if loss_csv_path:
+                            self._append_csv_row(loss_csv_path, [frame_num, self.averaged_losses[-1]])
 
                 curr_state = new_state
                 frame_num += 1
@@ -214,7 +239,25 @@ class SpaceInvaderAgent:
                     break
 
             # print("Episode finished. Reward:", episode_reward)
+            episode_num += 1
+            if episode_csv_path:
+                epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
+                self._append_csv_row(
+                    episode_csv_path,
+                    [frame_num, episode_num, episode_reward, epsilon, time.time() - start_time]
+                )
             self.rewards.append(episode_reward)
+
+    @staticmethod
+    def _init_metrics_csv(path, header):
+        if not os.path.exists(path):
+            with open(path, "w", newline="") as file:
+                csv.writer(file).writerow(header)
+
+    @staticmethod
+    def _append_csv_row(path, row):
+        with open(path, "a", newline="") as file:
+            csv.writer(file).writerow(row)
 
     def evaluate(self, eval_episodes):
         self.eval_rewards = []
