@@ -20,16 +20,26 @@ from src.agent.agent import SpaceInvaderAgent  # noqa: E402
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a SpaceInvaderAgent on ALE/SpaceInvaders-v5.")
 
-    parser.add_argument("--learning-rate", type=float, default=0.00025)
-    parser.add_argument("--memory-size", type=int, default=10 ** 6)
-    parser.add_argument("--memory-warmup", type=int, default=50_000)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--max-train-frames", type=float, default=0.6 * 10 ** 4)
-    parser.add_argument("--update-main-freq", type=int, default=4)
-    parser.add_argument("--update-target-freq", type=int, default=10_000)
-    parser.add_argument("--log-freq", type=float, default=0.2 * 10 ** 4)
-    parser.add_argument("--average-loss-freq", type=int, default=400)
-    parser.add_argument("--discount", type=float, default=0.99)
+    parser.add_argument("--learning-rate", type=float, default=0.00025,
+                         help="Adam learning rate for the main model's optimizer.")
+    parser.add_argument("--memory-size", type=int, default=10 ** 6,
+                         help="Number of frames the replay memory ring buffer holds.")
+    parser.add_argument("--memory-warmup", type=int, default=50_000,
+                         help="Number of frames to collect before training/logging starts.")
+    parser.add_argument("--batch-size", type=int, default=32,
+                         help="Number of transitions sampled from replay memory per update step.")
+    parser.add_argument("--max-train-frames", type=int, default=60_000,
+                         help="Total number of frames to train for.")
+    parser.add_argument("--update-main-freq", type=int, default=4,
+                         help="Train the main model every N frames.")
+    parser.add_argument("--update-target-freq", type=int, default=10_000,
+                         help="Sync the target model's weights from the main model every N frames.")
+    parser.add_argument("--log-freq", type=int, default=2_000,
+                         help="Print a training progress line every N frames.")
+    parser.add_argument("--average-loss-freq", type=int, default=400,
+                         help="Average and record the loss over the last N frames.")
+    parser.add_argument("--discount", type=float, default=0.99,
+                         help="Discount factor (gamma) used in the Q-learning target.")
 
     parser.add_argument("--resume-from", type=str, default=None,
                          help="Path to a checkpoint directory to resume training from.")

@@ -82,7 +82,7 @@ class SpaceInvaderAgent:
             memory_size=10 ** 6,
             memory_warmup=50_000,
             batch_size=32,
-            max_train_frames=0.6 * 10 ** 4,  # 400
+            max_train_frames=60_000,  # > memory_warmup so a default run actually logs something
             update_main_freq=4,
             update_target_freq=10_000,
             log_freq=0.2 * 10 ** 4,
@@ -328,6 +328,10 @@ class SpaceInvaderAgent:
         if not os.path.exists(path):
             os.makedirs(path)
             print(f"Folder '{path}' created.")
+
+        if not self.frame_nums:
+            print("No training history to save (no average_loss_freq checkpoint was reached); skipping.")
+            return
 
         train_history = {
             "averaged_losses": self.averaged_losses,
