@@ -94,9 +94,9 @@ class SpaceInvaderAgent:
             log_freq=0.2 * 10 ** 4,
             average_loss_freq=400,  # 20
             discount=0.99,
-            metrics_dir=None,  # if set, CSV metrics are written incrementally during train()
+            metrics_dir=None,
             checkpoint_freq=25_000,
-            checkpoint_path=None,  # if set, agent.save(checkpoint_path) is called every checkpoint_freq frames
+            checkpoint_path=None,
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
@@ -237,7 +237,6 @@ class SpaceInvaderAgent:
                         if loss_csv_path:
                             self._append_csv_row(loss_csv_path, [frame_num, self.averaged_losses[-1]])
 
-                # periodic checkpointing
                 if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
                     print(f"Checkpointing at frame {frame_num}...")
                     self.save(self.checkpoint_path)
@@ -428,9 +427,7 @@ class SpaceInvaderAgent:
         if not matches:
             raise FileNotFoundError(f"No train_history_* file found in '{path}'.")
 
-        # Repeated saves to the same path (e.g. periodic checkpointing) leave one
-        # train_history_<frame_num> file per save rather than overwriting, since the
-        # frame number is part of the filename; pick the most recent one.
+        # filename embeds the frame number, not a fixed name, so repeated saves accumulate here
         latest_match = max(matches, key=lambda p: int(p.rsplit('_', 1)[-1]))
 
         train_history = {}

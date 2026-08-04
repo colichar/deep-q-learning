@@ -54,29 +54,23 @@ def test_train_writes_periodic_checkpoint_resumable(tmp_path):
     agent = SpaceInvaderAgent(**AGENT_KWARGS, checkpoint_freq=250, checkpoint_path=str(checkpoint_path))
     agent.train()
 
-    # A checkpoint should have been written mid-run (well before the run finished at frame 600),
-    # without needing an explicit agent.save() call after train() returns.
+    # proves checkpointing fired on its own mid-run, without an explicit agent.save() call
     history_dir = checkpoint_path / "history"
     mid_run_files = list(history_dir.glob("train_history_*"))
     assert len(mid_run_files) == 1
     mid_run_frame = int(mid_run_files[0].name.rsplit("_", 1)[-1])
     assert 0 < mid_run_frame < agent.max_train_frames
 
-    # Mirror train.py's final `agent.save()` call after train() returns. train_history_* files
-    # are never overwritten (the frame number is part of the filename), so this leaves a second,
-    # newer file on disk alongside the mid-run checkpoint's - exactly the scenario
-    # load_train_history's "pick the latest" logic exists for.
+    # mirrors train.py's final save(), reproducing the multi-file case load_train_history handles
     agent.save(str(checkpoint_path))
     assert len(list(history_dir.glob("train_history_*"))) > 1
 
     resumed = SpaceInvaderAgent(**AGENT_KWARGS)
     resumed.load(str(checkpoint_path))
 
-    # Resuming should pick up the latest checkpoint, not the earlier mid-run one.
     assert resumed.start_frame_num == agent.frame_nums[-1]
     assert resumed.start_frame_num > mid_run_frame
 
-    # Resuming from the checkpoint should continue training without error.
     resumed.train()
     assert len(resumed.rewards) > 0
 

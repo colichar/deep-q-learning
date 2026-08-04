@@ -1,9 +1,7 @@
 """
 Unit test for SpaceInvaderAgent.load_train_history's checkpoint-selection logic (see GitHub
-issue #4: periodic checkpointing calls save() repeatedly against the same path, and since
-save_train_history's filename embeds the frame number instead of overwriting a fixed name,
-multiple train_history_<frame_num> files end up on disk - load_train_history must pick the
-one with the highest frame number, not just glob's first match).
+issue #4: periodic checkpointing saves repeatedly to the same path, leaving multiple
+train_history_<frame_num> files, so load_train_history must pick the highest one).
 """
 import pickle
 
@@ -24,9 +22,7 @@ def test_load_train_history_picks_highest_frame_num_regardless_of_glob_order(tmp
             )
         paths[frame_num] = str(path)
 
-    # glob.glob's result order isn't guaranteed to be sorted; force the non-latest-first order
-    # here so the test only passes if load_train_history explicitly selects the highest frame
-    # number rather than trusting whatever order glob happened to return.
+    # glob order isn't guaranteed sorted; force non-latest-first so an unsorted-first-match would fail
     monkeypatch.setattr("src.agent.agent.glob.glob", lambda pattern: [paths[200], paths[500]])
 
     agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
