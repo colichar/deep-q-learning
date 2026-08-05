@@ -97,6 +97,7 @@ class SpaceInvaderAgent:
             metrics_dir=None,
             checkpoint_freq=25_000,
             checkpoint_path=None,
+            replay_checkpoint_freq=None,
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
@@ -113,6 +114,11 @@ class SpaceInvaderAgent:
         self.discount = discount
         self.metrics_dir = metrics_dir
         self.checkpoint_freq = checkpoint_freq
+        # Defaults to checkpoint_freq, i.e. current behavior (replay memory saved every checkpoint).
+        # The replay buffer save is the expensive part (full frame array, uncompressed); a resumed
+        # run may load a replay memory snapshot slightly behind the resumed frame count when this
+        # is set higher than checkpoint_freq - harmless, the buffer just has less history.
+        self.replay_checkpoint_freq = replay_checkpoint_freq if replay_checkpoint_freq is not None else checkpoint_freq
         self.checkpoint_path = checkpoint_path
 
         self.device = torch_device("cuda" if is_available() else "cpu")
@@ -239,7 +245,8 @@ class SpaceInvaderAgent:
 
                 if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
                     print(f"Checkpointing at frame {frame_num}...")
-                    self.save(self.checkpoint_path)
+                    save_replay = frame_num % self.replay_checkpoint_freq == 0
+                    self.save(self.checkpoint_path, save_replay_memory=save_replay)
 
                 curr_state = new_state
                 frame_num += 1
@@ -348,18 +355,22 @@ class SpaceInvaderAgent:
         fig.tight_layout()
 
     def save(self,
-             path
+             path,
+             save_replay_memory=True,
              ):
         """
         Saves the agents replay memory, training history and model weights to disk.
 
         Parameters:
         - path (str): The path where the data should be saved.
+        - save_replay_memory (bool): Whether to save the replay memory buffer, which is the
+          expensive part of a checkpoint. Set to False to skip it (see replay_checkpoint_freq).
         """
 
-        print('Saving replay memory to disk...')
-        self.save_replay_memory(path + '/replay_memory')
-        print('Replay memory saved.')
+        if save_replay_memory:
+            print('Saving replay memory to disk...')
+            self.save_replay_memory(path + '/replay_memory')
+            print('Replay memory saved.')
         print('Saving model to disk...')
         self.save_model(path + '/model')
         print('Model saved.')
