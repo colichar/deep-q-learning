@@ -253,6 +253,12 @@ class SpaceInvaderAgent:
                 if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
                     print(f"Checkpointing at frame {frame_num}...")
                     write_replay = frame_num % self.replay_checkpoint_freq == 0
+                    # Fold elapsed time in before saving, and reset session_start, so a crash
+                    # right after this checkpoint doesn't lose this segment's wall-clock time
+                    # from cumulative_wall_clock_seconds on the next resume.
+                    now = time.time()
+                    self.cumulative_wall_clock_seconds += now - session_start
+                    session_start = now
                     self.save(self.checkpoint_path, write_replay_memory=write_replay)
 
                 curr_state = new_state
