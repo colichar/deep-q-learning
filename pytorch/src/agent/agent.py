@@ -184,6 +184,9 @@ class SpaceInvaderAgent:
             os.makedirs(self.metrics_dir, exist_ok=True)
             episode_csv_path = os.path.join(self.metrics_dir, "episodes.csv")
             loss_csv_path = os.path.join(self.metrics_dir, "losses.csv")
+            if self.start_frame_num == 0:
+                self._guard_against_unrelated_run(episode_csv_path)
+                self._guard_against_unrelated_run(loss_csv_path)
             self._init_metrics_csv(
                 episode_csv_path,
                 ["frame_num", "episode_num", "episode_reward", "epsilon", "wall_clock_elapsed_seconds"]
@@ -265,6 +268,23 @@ class SpaceInvaderAgent:
                     [frame_num, episode_num, episode_reward, epsilon, time.time() - start_time]
                 )
             self.rewards.append(episode_reward)
+
+    @staticmethod
+    def _guard_against_unrelated_run(path):
+        # start_frame_num == 0 means this run wasn't resumed; a metrics CSV with data rows here
+        # is from an unrelated prior run, not this one.
+        if not os.path.exists(path):
+            return
+        with open(path, newline="") as file:
+            reader = csv.reader(file)
+            next(reader, None)
+            has_data_row = next(reader, None) is not None
+        if has_data_row:
+            raise FileExistsError(
+                f"'{path}' already has rows from a previous run, but this run wasn't resumed "
+                "(no --resume-from). Pass --resume-from to continue that run, or point "
+                "--metrics-dir elsewhere to start a fresh one."
+            )
 
     @staticmethod
     def _init_metrics_csv(path, header):
