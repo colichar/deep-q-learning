@@ -276,7 +276,9 @@ class SpaceInvaderAgent:
         if not os.path.exists(path):
             return
         with open(path, newline="") as file:
-            has_data_row = len(list(csv.reader(file))) > 1
+            reader = csv.reader(file)
+            next(reader, None)
+            has_data_row = next(reader, None) is not None
         if has_data_row:
             raise FileExistsError(
                 f"'{path}' already has rows from a previous run, but this run wasn't resumed "
