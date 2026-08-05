@@ -49,6 +49,15 @@ def parse_args():
                          help="Directory to write episodes.csv/losses.csv to incrementally during training.")
     parser.add_argument("--checkpoint-freq", type=int, default=25_000,
                          help="Save a checkpoint to --save-path every N frames during training.")
+    parser.add_argument("--replay-checkpoint-freq", type=int, default=None,
+                         help="Save the replay memory buffer (the expensive part of a checkpoint) "
+                              "every N frames, independently of --checkpoint-freq. Defaults to "
+                              "--checkpoint-freq. Must be a multiple of --checkpoint-freq, since "
+                              "it's only checked when a checkpoint fires. Set higher than "
+                              "--checkpoint-freq to checkpoint model/history often while writing "
+                              "the multi-GB replay buffer less often; a resumed run will then load "
+                              "a replay memory snapshot slightly behind the resumed frame count, "
+                              "which is harmless.")
 
     return parser.parse_args()
 
@@ -70,6 +79,7 @@ def main():
         metrics_dir=args.metrics_dir,
         checkpoint_freq=args.checkpoint_freq,
         checkpoint_path=args.save_path,
+        replay_checkpoint_freq=args.replay_checkpoint_freq,
     )
 
     print(f"Using device: {agent.device}")

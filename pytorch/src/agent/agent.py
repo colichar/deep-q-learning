@@ -97,6 +97,7 @@ class SpaceInvaderAgent:
             metrics_dir=None,
             checkpoint_freq=25_000,
             checkpoint_path=None,
+            replay_checkpoint_freq=None,
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
@@ -113,6 +114,14 @@ class SpaceInvaderAgent:
         self.discount = discount
         self.metrics_dir = metrics_dir
         self.checkpoint_freq = checkpoint_freq
+        self.replay_checkpoint_freq = replay_checkpoint_freq if replay_checkpoint_freq is not None else checkpoint_freq
+
+        if self.replay_checkpoint_freq % checkpoint_freq != 0:
+            raise ValueError(
+                f"replay_checkpoint_freq ({self.replay_checkpoint_freq}) must be a multiple of "
+                f"checkpoint_freq ({checkpoint_freq}), since the replay-memory write is only "
+                "checked when a model/history checkpoint fires."
+            )
         self.checkpoint_path = checkpoint_path
 
         self.device = torch_device("cuda" if is_available() else "cpu")
@@ -239,7 +248,8 @@ class SpaceInvaderAgent:
 
                 if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
                     print(f"Checkpointing at frame {frame_num}...")
-                    self.save(self.checkpoint_path)
+                    write_replay = frame_num % self.replay_checkpoint_freq == 0
+                    self.save(self.checkpoint_path, write_replay_memory=write_replay)
 
                 curr_state = new_state
                 frame_num += 1
@@ -348,18 +358,22 @@ class SpaceInvaderAgent:
         fig.tight_layout()
 
     def save(self,
-             path
+             path,
+             write_replay_memory=True,
              ):
         """
         Saves the agents replay memory, training history and model weights to disk.
 
         Parameters:
         - path (str): The path where the data should be saved.
+        - write_replay_memory (bool): Whether to save the replay memory buffer, which is the
+          expensive part of a checkpoint. Set to False to skip it (see replay_checkpoint_freq).
         """
 
-        print('Saving replay memory to disk...')
-        self.save_replay_memory(path + '/replay_memory')
-        print('Replay memory saved.')
+        if write_replay_memory:
+            print('Saving replay memory to disk...')
+            self.save_replay_memory(path + '/replay_memory')
+            print('Replay memory saved.')
         print('Saving model to disk...')
         self.save_model(path + '/model')
         print('Model saved.')
@@ -405,7 +419,16 @@ class SpaceInvaderAgent:
         """
 
         print('Loading replay memory from disk...')
-        self.load_replay_memory(path + '/replay_memory')
+        try:
+            self.load_replay_memory(path + '/replay_memory')
+        except FileNotFoundError as e:
+            raise FileNotFoundError(
+                f"No replay-memory snapshot found under '{path}/replay_memory' (possible with "
+                "replay_checkpoint_freq > checkpoint_freq if this checkpoint was written before "
+                "the first replay-memory save). Resume from a checkpoint that has one, start a "
+                "fresh run, or call load_model()/load_train_history() directly if you only need "
+                "the model weights."
+            ) from e
         print('Replay memory loaded.')
         print('Loading model weights and training history from disk...')
         self.load_model(path + '/model')
