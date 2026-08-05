@@ -75,7 +75,7 @@ class ExplorationVsExploitation:
         else:
             # we choose the action yielding the highest reward according to our main model
             model_prediction = self.dqn_model.best_action(
-                curr_state.float().unsqueeze(0).to(self.dqn_model.device)
+                curr_state.float().div(255.0).unsqueeze(0).to(self.dqn_model.device)
             )
             model_prediction = int(model_prediction[0].cpu().numpy())
             return model_prediction
@@ -151,9 +151,11 @@ class SpaceInvaderAgent:
         curr_states, new_states, curr_actions, rewards, terminal_mask = minibatch
 
         # Replay memory lives on host RAM regardless of device (only the sampled
-        # batch needs to move); states are stored as uint8, cast to float for the model.
-        curr_states = curr_states.float().to(self.device)
-        new_states = new_states.float().to(self.device)
+        # batch needs to move); states are stored as uint8 (0-255), cast to float and scaled to
+        # [0, 1] for the model - unnormalized 0-255 inputs blow up activations/Q-values, which
+        # compounds through the bootstrapped target and shows up as ever-increasing loss.
+        curr_states = curr_states.float().div(255.0).to(self.device)
+        new_states = new_states.float().div(255.0).to(self.device)
         curr_actions = curr_actions.to(self.device)
         rewards = rewards.to(self.device)
         terminal_mask = terminal_mask.to(self.device)
