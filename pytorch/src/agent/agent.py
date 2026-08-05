@@ -139,6 +139,7 @@ class SpaceInvaderAgent:
         self.frame_nums = []
         self.averaged_losses = []
         self.rewards = []
+        self.cumulative_wall_clock_seconds = 0.0
 
         self.eval_rewards = []
         self.frames_for_gif = []
@@ -193,7 +194,7 @@ class SpaceInvaderAgent:
             )
             self._init_metrics_csv(loss_csv_path, ["frame_num", "avg_loss"])
 
-        start_time = time.time()
+        session_start = time.time()
         episode_num = len(self.rewards)
 
         frame_num = self.start_frame_num + 1
@@ -252,6 +253,12 @@ class SpaceInvaderAgent:
                 if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
                     print(f"Checkpointing at frame {frame_num}...")
                     write_replay = frame_num % self.replay_checkpoint_freq == 0
+                    # Fold elapsed time in before saving, and reset session_start, so a crash
+                    # right after this checkpoint doesn't lose this segment's wall-clock time
+                    # from cumulative_wall_clock_seconds on the next resume.
+                    now = time.time()
+                    self.cumulative_wall_clock_seconds += now - session_start
+                    session_start = now
                     self.save(self.checkpoint_path, write_replay_memory=write_replay)
 
                 curr_state = new_state
@@ -263,11 +270,14 @@ class SpaceInvaderAgent:
             episode_num += 1
             if episode_csv_path:
                 epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
+                elapsed = self.cumulative_wall_clock_seconds + (time.time() - session_start)
                 self._append_csv_row(
                     episode_csv_path,
-                    [frame_num, episode_num, episode_reward, epsilon, time.time() - start_time]
+                    [frame_num, episode_num, episode_reward, epsilon, elapsed]
                 )
             self.rewards.append(episode_reward)
+
+        self.cumulative_wall_clock_seconds += time.time() - session_start
 
     @staticmethod
     def _guard_against_unrelated_run(path):
@@ -422,7 +432,8 @@ class SpaceInvaderAgent:
             "averaged_losses": self.averaged_losses,
             "frame_nums": self.frame_nums,
             "losses": self.losses,
-            "rewards": self.rewards
+            "rewards": self.rewards,
+            "cumulative_wall_clock_seconds": self.cumulative_wall_clock_seconds,
         }
 
         with open(path + f'/train_history_{self.frame_nums[-1]}', 'wb') as file:
@@ -483,5 +494,7 @@ class SpaceInvaderAgent:
         self.averaged_losses = train_history["averaged_losses"]
         self.frame_nums = train_history["frame_nums"]
         self.rewards = train_history["rewards"]
+        # .get(..., 0.0) for backward compatibility with pickles saved before this field existed.
+        self.cumulative_wall_clock_seconds = train_history.get("cumulative_wall_clock_seconds", 0.0)
 
         self.start_frame_num = train_history["frame_nums"][-1]
