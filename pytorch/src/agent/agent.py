@@ -114,20 +114,8 @@ class SpaceInvaderAgent:
         self.discount = discount
         self.metrics_dir = metrics_dir
         self.checkpoint_freq = checkpoint_freq
-        # Defaults to checkpoint_freq, i.e. current behavior (replay memory saved every checkpoint).
-        # The replay buffer save is the expensive part (full frame array, uncompressed); a resumed
-        # run may load a replay memory snapshot slightly behind the resumed frame count when this
-        # is set higher than checkpoint_freq - harmless, the buffer just has less history.
         self.replay_checkpoint_freq = replay_checkpoint_freq if replay_checkpoint_freq is not None else checkpoint_freq
-        # train()'s checkpoint block only tests replay_checkpoint_freq inside the
-        # checkpoint_freq-gated `if`, so a frame count that is a checkpoint_freq boundary but not
-        # also a replay_checkpoint_freq boundary is the only time the replay write is ever
-        # evaluated for that frame. If replay_checkpoint_freq isn't a multiple of checkpoint_freq,
-        # frame_num % replay_checkpoint_freq == 0 can fail to coincide with any checkpoint_freq
-        # boundary at all (depending on the two values' shared factors), so the replay buffer
-        # would silently stop being written after the initial default. Rejecting non-multiples
-        # here turns that into an immediate, understandable startup error instead of a training
-        # run that quietly never checkpoints its replay memory again.
+
         if self.replay_checkpoint_freq % checkpoint_freq != 0:
             raise ValueError(
                 f"replay_checkpoint_freq ({self.replay_checkpoint_freq}) must be a multiple of "
@@ -434,16 +422,6 @@ class SpaceInvaderAgent:
         try:
             self.load_replay_memory(path + '/replay_memory')
         except FileNotFoundError as e:
-            # train() gates weight updates on frame_num > memory_warmup using the *resumed*
-            # frame count, not on how full the replay buffer actually is. So if we silently
-            # fell back to a freshly-initialized empty ReplayMemory here, a resumed run could
-            # start sampling minibatches from a near-empty buffer the moment training resumes,
-            # rather than failing at a clear, well-understood point. Raising instead surfaces
-            # the problem immediately and tells the caller their two real options: pick a
-            # checkpoint that does have a replay-memory snapshot, or start a fresh run. If a
-            # caller only needs the model weights (e.g. evaluate(), which never touches
-            # ReplayMemory), they can call load_model()/load_train_history() directly instead
-            # of going through this method.
             raise FileNotFoundError(
                 f"No replay-memory snapshot found under '{path}/replay_memory' (possible with "
                 "replay_checkpoint_freq > checkpoint_freq if this checkpoint was written before "
