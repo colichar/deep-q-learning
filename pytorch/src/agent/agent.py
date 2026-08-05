@@ -119,6 +119,21 @@ class SpaceInvaderAgent:
         # run may load a replay memory snapshot slightly behind the resumed frame count when this
         # is set higher than checkpoint_freq - harmless, the buffer just has less history.
         self.replay_checkpoint_freq = replay_checkpoint_freq if replay_checkpoint_freq is not None else checkpoint_freq
+        # train()'s checkpoint block only tests replay_checkpoint_freq inside the
+        # checkpoint_freq-gated `if`, so a frame count that is a checkpoint_freq boundary but not
+        # also a replay_checkpoint_freq boundary is the only time the replay write is ever
+        # evaluated for that frame. If replay_checkpoint_freq isn't a multiple of checkpoint_freq,
+        # frame_num % replay_checkpoint_freq == 0 can fail to coincide with any checkpoint_freq
+        # boundary at all (depending on the two values' shared factors), so the replay buffer
+        # would silently stop being written after the initial default. Rejecting non-multiples
+        # here turns that into an immediate, understandable startup error instead of a training
+        # run that quietly never checkpoints its replay memory again.
+        if self.replay_checkpoint_freq % checkpoint_freq != 0:
+            raise ValueError(
+                f"replay_checkpoint_freq ({self.replay_checkpoint_freq}) must be a multiple of "
+                f"checkpoint_freq ({checkpoint_freq}), since the replay-memory write is only "
+                "checked when a model/history checkpoint fires."
+            )
         self.checkpoint_path = checkpoint_path
 
         self.device = torch_device("cuda" if is_available() else "cpu")
@@ -245,8 +260,8 @@ class SpaceInvaderAgent:
 
                 if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
                     print(f"Checkpointing at frame {frame_num}...")
-                    save_replay = frame_num % self.replay_checkpoint_freq == 0
-                    self.save(self.checkpoint_path, save_replay_memory=save_replay)
+                    write_replay = frame_num % self.replay_checkpoint_freq == 0
+                    self.save(self.checkpoint_path, write_replay_memory=write_replay)
 
                 curr_state = new_state
                 frame_num += 1
@@ -356,18 +371,18 @@ class SpaceInvaderAgent:
 
     def save(self,
              path,
-             save_replay_memory=True,
+             write_replay_memory=True,
              ):
         """
         Saves the agents replay memory, training history and model weights to disk.
 
         Parameters:
         - path (str): The path where the data should be saved.
-        - save_replay_memory (bool): Whether to save the replay memory buffer, which is the
+        - write_replay_memory (bool): Whether to save the replay memory buffer, which is the
           expensive part of a checkpoint. Set to False to skip it (see replay_checkpoint_freq).
         """
 
-        if save_replay_memory:
+        if write_replay_memory:
             print('Saving replay memory to disk...')
             self.save_replay_memory(path + '/replay_memory')
             print('Replay memory saved.')
@@ -419,14 +434,22 @@ class SpaceInvaderAgent:
         try:
             self.load_replay_memory(path + '/replay_memory')
         except FileNotFoundError as e:
-            # Silently falling back to an empty buffer would let training resume past
-            # memory_warmup and sample from a near-empty ReplayMemory; failing loudly lets
-            # the user pick a checkpoint that has a replay-memory snapshot, or start fresh.
+            # train() gates weight updates on frame_num > memory_warmup using the *resumed*
+            # frame count, not on how full the replay buffer actually is. So if we silently
+            # fell back to a freshly-initialized empty ReplayMemory here, a resumed run could
+            # start sampling minibatches from a near-empty buffer the moment training resumes,
+            # rather than failing at a clear, well-understood point. Raising instead surfaces
+            # the problem immediately and tells the caller their two real options: pick a
+            # checkpoint that does have a replay-memory snapshot, or start a fresh run. If a
+            # caller only needs the model weights (e.g. evaluate(), which never touches
+            # ReplayMemory), they can call load_model()/load_train_history() directly instead
+            # of going through this method.
             raise FileNotFoundError(
                 f"No replay-memory snapshot found under '{path}/replay_memory' (possible with "
                 "replay_checkpoint_freq > checkpoint_freq if this checkpoint was written before "
-                "the first replay-memory save). Resume from a checkpoint that has one, or start "
-                "a fresh run."
+                "the first replay-memory save). Resume from a checkpoint that has one, start a "
+                "fresh run, or call load_model()/load_train_history() directly if you only need "
+                "the model weights."
             ) from e
         print('Replay memory loaded.')
         print('Loading model weights and training history from disk...')

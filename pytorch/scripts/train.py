@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument("--replay-checkpoint-freq", type=int, default=None,
                          help="Save the replay memory buffer (the expensive part of a checkpoint) "
                               "every N frames, independently of --checkpoint-freq. Defaults to "
-                              "--checkpoint-freq. Should be a multiple of --checkpoint-freq, since "
+                              "--checkpoint-freq. Must be a multiple of --checkpoint-freq, since "
                               "it's only checked when a checkpoint fires. Set higher than "
                               "--checkpoint-freq to checkpoint model/history often while writing "
                               "the multi-GB replay buffer less often; a resumed run will then load "
