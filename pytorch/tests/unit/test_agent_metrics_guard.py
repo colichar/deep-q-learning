@@ -65,5 +65,6 @@ def test_train_does_not_guard_a_resumed_run_even_with_prior_data(tmp_path):
     agent.start_frame_num = 100  # resumed
     agent.max_train_frames = 0  # keeps train()'s while-loop from ever running
     agent.rewards = []
+    agent.cumulative_wall_clock_seconds = 0.0
 
     agent.train()  # must not raise, even though the CSVs already have data rows
