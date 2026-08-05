@@ -10,6 +10,17 @@ The `.venv` (Python 3.12) and `pyproject.toml`/`uv.lock` are managed with [uv](h
 - `uv add <package>` — add a new dependency (edits `pyproject.toml`, re-resolves `uv.lock`, installs it). Don't run two `uv add`/`uv sync` at once in the same repo — they race on `pyproject.toml`/`uv.lock`.
 - `uv run <command>` — run a command inside `.venv` without manually activating it, e.g. `uv run pytest`. Unlike `uv sync`, its implicit sync defaults to `--inexact` (won't uninstall an already-installed extra just because `--extra` was omitted) — but it also won't *install* torch for you the first time, so still sync explicitly at least once per machine.
 
+### Training
+
+`pytorch/scripts/train.py` is the entry point for starting a training run:
+
+```
+uv run python pytorch/scripts/train.py
+```
+
+Run `uv run python pytorch/scripts/train.py --help` for the full list of flags (learning rate, memory size,
+checkpointing, resuming from a saved run, etc.).
+
 ### CPU vs GPU torch
 
 `torch`'s default PyPI wheel on Linux bundles the full CUDA runtime (~2.5GB of `nvidia-*` packages) — unnecessary on a CPU-only machine but exactly what's needed on a machine with an NVIDIA GPU. `torch`/`torchvision` are declared as two mutually-exclusive optional extras instead of plain base dependencies, each pointing at a different wheel index:
