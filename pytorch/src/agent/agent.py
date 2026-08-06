@@ -98,6 +98,7 @@ class SpaceInvaderAgent:
             checkpoint_freq=25_000,
             checkpoint_path=None,
             replay_checkpoint_freq=None,
+            optimizer="adam",
     ):
         self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
 
@@ -126,7 +127,7 @@ class SpaceInvaderAgent:
 
         self.device = torch_device("cuda" if is_available() else "cpu")
 
-        self.MainModel = CNNModelPY(self.my_env.action_space.n, learning_rate, device=self.device)
+        self.MainModel = CNNModelPY(self.my_env.action_space.n, learning_rate, device=self.device, optimizer=optimizer)
         self.TargetModel = CNNModelPY(self.my_env.action_space.n, device=self.device)
         self.TargetModel.set_weights(self.MainModel.get_weights())
 

@@ -2,7 +2,7 @@ from torch.nn import Module, Conv2d, Linear
 from torch.nn.functional import relu, huber_loss
 from torch import max, argmax, save, load, device as torch_device
 from torch.cuda import is_available
-from torch.optim import Adam
+from torch.optim import Adam, RMSprop
 
 import os
 
@@ -12,7 +12,8 @@ class CNNModelPY(Module):
     Implementation of a CNN model to be used by the DQN Agent.
     """
 
-    def __init__(self, n_actions: int, learning_rate: float = 0.001, state_shape: tuple = (84, 84, 4), device=None):
+    def __init__(self, n_actions: int, learning_rate: float = 0.001, state_shape: tuple = (84, 84, 4), device=None,
+                 optimizer: str = "adam"):
         super(CNNModelPY, self).__init__()
 
         self.n_actions = n_actions
@@ -23,7 +24,12 @@ class CNNModelPY(Module):
         self.init_model()
         # Move params to device before constructing the optimizer
         self.to(self.device)
-        self.optimizer = Adam(self.parameters(), lr=learning_rate)
+        if optimizer == "adam":
+            self.optimizer = Adam(self.parameters(), lr=learning_rate)
+        elif optimizer == "rmsprop":
+            self.optimizer = RMSprop(self.parameters(), lr=learning_rate, alpha=0.95, momentum=0.95, eps=0.01)
+        else:
+            raise ValueError(f"Unknown optimizer '{optimizer}', expected 'adam' or 'rmsprop'.")
 
     def custom_huber_loss(self, y_pred, y_true):
         """
