@@ -21,7 +21,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train a SpaceInvaderAgent on ALE/SpaceInvaders-v5.")
 
     parser.add_argument("--learning-rate", type=float, default=0.00025,
-                         help="Adam learning rate for the main model's optimizer.")
+                         help="Learning rate for the main model's optimizer.")
+    parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "rmsprop"],
+                         help="Optimizer for the main model. 'rmsprop' uses the DeepMind Nature paper's "
+                              "RMSProp hyperparameters (gradient momentum 0.95, squared gradient momentum "
+                              "0.95, min squared gradient 0.01), not PyTorch's RMSprop defaults. Note: "
+                              "--resume-from requires the same optimizer as the checkpoint being loaded, "
+                              "since optimizer state (e.g. Adam's moment estimates) isn't portable "
+                              "between optimizer types.")
     parser.add_argument("--memory-size", type=int, default=10 ** 6,
                          help="Number of frames the replay memory ring buffer holds.")
     parser.add_argument("--memory-warmup", type=int, default=50_000,
@@ -80,6 +87,7 @@ def main():
         checkpoint_freq=args.checkpoint_freq,
         checkpoint_path=args.save_path,
         replay_checkpoint_freq=args.replay_checkpoint_freq,
+        optimizer=args.optimizer,
     )
 
     print(f"Using device: {agent.device}")
