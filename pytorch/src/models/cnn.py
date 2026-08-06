@@ -27,8 +27,6 @@ class CNNModelPY(Module):
         if optimizer == "adam":
             self.optimizer = Adam(self.parameters(), lr=learning_rate)
         elif optimizer == "rmsprop":
-            # DeepMind's Nature paper hyperparameters (gradient momentum, squared gradient
-            # momentum, min squared gradient), not PyTorch's RMSprop defaults.
             self.optimizer = RMSprop(self.parameters(), lr=learning_rate, alpha=0.95, momentum=0.95, eps=0.01)
         else:
             raise ValueError(f"Unknown optimizer '{optimizer}', expected 'adam' or 'rmsprop'.")
