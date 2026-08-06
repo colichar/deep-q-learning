@@ -75,7 +75,7 @@ class ExplorationVsExploitation:
         else:
             # we choose the action yielding the highest reward according to our main model
             model_prediction = self.dqn_model.best_action(
-                curr_state.float().div(255.0).unsqueeze(0).to(self.dqn_model.device)
+                curr_state.to(self.dqn_model.device).float().div(255.0).unsqueeze(0)
             )
             model_prediction = int(model_prediction[0].cpu().numpy())
             return model_prediction
@@ -150,12 +150,14 @@ class SpaceInvaderAgent:
         # Extract individual components from minibatch
         curr_states, new_states, curr_actions, rewards, terminal_mask = minibatch
 
-        # Replay memory lives on host RAM regardless of device (only the sampled
-        # batch needs to move); states are stored as uint8 (0-255), cast to float and scaled to
-        # [0, 1] for the model - unnormalized 0-255 inputs blow up activations/Q-values, which
-        # compounds through the bootstrapped target and shows up as ever-increasing loss.
-        curr_states = curr_states.float().div(255.0).to(self.device)
-        new_states = new_states.float().div(255.0).to(self.device)
+        # Replay memory lives on host RAM regardless of device (only the sampled batch needs to
+        # move); states are stored as uint8 (0-255). Transfer as uint8 (4x smaller than float32)
+        # and cast/scale to [0, 1] on-device, rather than normalizing on CPU first - saves
+        # host-side work and PCIe bandwidth (issue #23). Normalizing at all (vs. leaving raw
+        # 0-255 values) matters for correctness: unnormalized inputs blow up activations/Q-values,
+        # which compounds through the bootstrapped target and shows up as ever-increasing loss.
+        curr_states = curr_states.to(self.device).float().div(255.0)
+        new_states = new_states.to(self.device).float().div(255.0)
         curr_actions = curr_actions.to(self.device)
         rewards = rewards.to(self.device)
         terminal_mask = terminal_mask.to(self.device)
