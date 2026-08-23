@@ -34,7 +34,8 @@ class ReplayMemory:
 
         Parameters:
         - frame: (84, 84) uint8 array, the newest frame only (not a stacked state).
-        - action (int): action taken after observing this frame.
+        - action (int): action that was taken and produced this frame (i.e. the action
+          taken from the *previous* state, not from the state this frame completes).
         - reward (float): reward received for that action.
         - terminal (bool): whether this frame ended the episode (lives == 0).
         """
@@ -53,10 +54,14 @@ class ReplayMemory:
 
     def _valid_index(self, index):
         """
-        An index is samplable only if it has state_length - 1 frames of history behind
-        it, isn't the most recently written frame (its next_state would read a stale
-        frame from the write head), and none of the state's earlier frames belong to a
-        different episode than `index` itself.
+        `index` names a stored (action, reward, terminal) triple, i.e. the transition
+        curr_state -> next_state where next_state is the state ending at `index` and
+        curr_state is the state ending at `index - 1` (see get_batch). It is samplable
+        only if state_length frames of history exist behind it - enough to build both
+        of those state windows - and none of those state_length preceding frames belong
+        to a different episode than `index` itself. `index` itself is allowed to be
+        terminal (it's the natural terminal transition), so it's excluded from that
+        check.
 
         Before the buffer has wrapped, the oldest frame is at position 0. Once it has
         wrapped, the oldest frame is at `self.idx` (the next slot due to be overwritten)
@@ -65,16 +70,11 @@ class ReplayMemory:
         """
         oldest = 0 if self.count < self.capacity else self.idx
         age_from_oldest = (index - oldest) % self.capacity
-        if age_from_oldest < self.state_length - 1:
+        if age_from_oldest < self.state_length:
             # not enough history behind index yet
             return False
 
-        most_recent = (self.idx - 1) % self.capacity
-        if index == most_recent:
-            # newest index is removed since next_state would be stale
-            return False
-
-        for offset in range(1, self.state_length):
+        for offset in range(1, self.state_length + 1):
             if self.terminal[(index - offset) % self.capacity]:
                 # window would mix frames from different episodes
                 return False
@@ -84,6 +84,11 @@ class ReplayMemory:
     def get_batch(self):
         """
         Creates a randomly picked training batch from memory.
+
+        For a sampled index `i`, actions[i]/rewards[i]/terminal[i] describe the
+        transition that produced frame i, i.e. curr_state -> next_state where
+        next_state is the state ending at i and curr_state is the state ending at
+        i - 1 (see add_frame).
         """
         upper_bound = self.count if self.count < self.capacity else self.capacity
         indices = []
@@ -92,8 +97,8 @@ class ReplayMemory:
             if self._valid_index(candidate):
                 indices.append(candidate)
 
-        curr_states = stack([self._get_state(i) for i in indices])
-        next_states = stack([self._get_state((i + 1) % self.capacity) for i in indices])
+        curr_states = stack([self._get_state((i - 1) % self.capacity) for i in indices])
+        next_states = stack([self._get_state(i) for i in indices])
 
         return (
             from_numpy(curr_states),

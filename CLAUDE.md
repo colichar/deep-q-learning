@@ -76,10 +76,15 @@ Key design points worth knowing before touching this code:
 - **`ReplayMemory` (`utils/replay_memory.py`) stores one frame per slot, not stacked 4-frame states.** States are
   reconstructed by indexing `state_length` consecutive frames out of the circular buffer at sample time
   (`_get_state`). This is what makes a paper-scale (10^6-frame) buffer fit in RAM instead of requiring 4x the
-  memory. `_valid_index` is the load-bearing piece of correctness here: it rejects indices too close to the write
-  head (stale `next_state`) and indices whose 4-frame window would cross an episode boundary (`terminal` flag).
-  Any change to write/sample logic must keep both invariants intact — see
-  `pytorch/tests/unit/test_replay_memory.py` for the boundary/wraparound tests that guard this.
+  memory. For a sampled index `i`, `actions[i]`/`rewards[i]`/`terminal[i]` describe the transition into frame `i`:
+  `curr_state = _get_state(i - 1)` (state ending one frame before `i`) transitions via `actions[i]` to
+  `next_state = _get_state(i)` (state ending at `i`) — get this backwards and the states silently shift by one
+  frame relative to the action/reward that produced them. `_valid_index` is the load-bearing piece of correctness
+  here: it
+  rejects indices without `state_length` frames of real history behind them, and indices whose `state_length`
+  preceding frames (not including `i` itself, which is allowed to be the terminal frame) cross an episode
+  boundary (`terminal` flag). Any change to write/sample logic must keep both invariants intact — see
+  `pytorch/tests/unit/test_replay_memory.py` for the boundary/wraparound/alignment tests that guard this.
 - **`utils/replay_memory_from_disk.py` (`ReplayMemoryFromDisk`) is an orphaned earlier design** (disk-backed
   `torch.utils.data.Dataset`) — it is not imported by the agent and predates the ring-buffer approach above. Treat
   it as historical, not as a second code path to keep in sync.
