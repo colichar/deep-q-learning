@@ -58,8 +58,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["pytorch"]
-testpaths = ["pytorch/tests"]
+pythonpath = ["."]
+testpaths = ["tests"]
 markers = [
     "integration: exercises multiple components together (env, model, filesystem); slower than unit tests",
 ]

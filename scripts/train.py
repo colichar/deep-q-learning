@@ -2,16 +2,15 @@
 CLI entry point for kicking off a SpaceInvaderAgent training run.
 
 Usage:
-    uv run python pytorch/scripts/train.py --max-train-frames 70000
-    uv run python pytorch/scripts/train.py --resume-from pytorch/scripts/output --save-path pytorch/scripts/output
+    uv run python scripts/train.py --max-train-frames 70000
+    uv run python scripts/train.py --resume-from scripts/output --save-path scripts/output
 """
 import argparse
 import os
 import sys
 
-# Make `pytorch/` (the parent of this script's directory) importable as the
-# root for `src...` regardless of the caller's cwd, since the repo also has a
-# deprecated top-level `src/` (TensorFlow) that would otherwise shadow it.
+# Make the repo root (the parent of this script's directory) importable as the
+# root for `src...` regardless of the caller's cwd.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.agent.agent import SpaceInvaderAgent  # noqa: E402
@@ -50,9 +49,9 @@ def parse_args():
 
     parser.add_argument("--resume-from", type=str, default=None,
                          help="Path to a checkpoint directory to resume training from.")
-    parser.add_argument("--save-path", type=str, default="pytorch/scripts/output",
+    parser.add_argument("--save-path", type=str, default="scripts/output",
                          help="Path to save the checkpoint to after training.")
-    parser.add_argument("--metrics-dir", type=str, default="pytorch/scripts/output/metrics",
+    parser.add_argument("--metrics-dir", type=str, default="scripts/output/metrics",
                          help="Directory to write episodes.csv/losses.csv to incrementally during training.")
     parser.add_argument("--checkpoint-freq", type=int, default=25_000,
                          help="Save a checkpoint to --save-path every N frames during training.")

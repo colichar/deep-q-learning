@@ -7,8 +7,8 @@ writes, so it can be pointed at a run that's already in progress (or already fin
 no changes to the training code, and dropping this file removes the feature entirely.
 
 Usage:
-    uv run python pytorch/scripts/tensorboard_bridge.py --metrics-dir pytorch/scripts/output-rmsprop/metrics
-    uv run tensorboard --logdir pytorch/scripts/output-rmsprop/tensorboard
+    uv run python scripts/tensorboard_bridge.py --metrics-dir scripts/output-rmsprop/metrics
+    uv run tensorboard --logdir scripts/output-rmsprop/tensorboard
 """
 import argparse
 import csv

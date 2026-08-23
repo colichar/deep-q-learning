@@ -1,115 +1,148 @@
-import tensorflow as tf
+import os
+
+import numpy as np
+from numpy import zeros, uint8, int64, float32, bool_, stack
+from numpy.random import randint
+from torch import from_numpy
+
 
 class ReplayMemory:
-    """Stores the experience (frames) of the agent so they can be replayed for training."""
-    def __init__(self, max_samples, batch_size):
-        self.max_samples = max_samples
+    """
+    Stores the experience (frames) of the agent so they can be replayed for training.
+
+    Frames are stored once each in a circular buffer. A "state" is a sample of
+    consecutive frames, reconstructed by indexing into the buffer, so overlapping
+    states share the same underlying bytes instead of being duplicated.
+    """
+
+    def __init__(self, capacity, batch_size, frame_height=84, frame_width=84, state_length=4):
+        self.capacity = capacity
         self.batch_size = batch_size
+        self.state_length = state_length
 
-        # Initialize the counter for the buffers
-        self.idx = tf.Variable(0, dtype=tf.int32)
-        self.num_of_exp = tf.Variable(0, dtype=tf.int32)
+        self.frames = zeros((capacity, frame_height, frame_width), dtype=uint8)
+        self.actions = zeros(capacity, dtype=int64)
+        self.rewards = zeros(capacity, dtype=float32)
+        self.terminal = zeros(capacity, dtype=bool_)
 
-        # Initialize the buffers
-        self.buffer_current_state = tf.Variable(tf.zeros((max_samples, 84, 84, 4), dtype=tf.uint8))
-        self.buffer_next_state = tf.Variable(tf.zeros((max_samples, 84, 84, 4), dtype=tf.uint8))
-        self.buffer_action = tf.Variable(tf.zeros((max_samples,), dtype=tf.int32))
-        self.buffer_reward = tf.Variable(tf.zeros((max_samples,), dtype=tf.float32))
-        self.buffer_lives = tf.Variable(tf.zeros((max_samples,), dtype=tf.int32))
+        self.idx = 0
+        self.count = 0
 
-        # Initialize checkpoint for saving/loading
-        self.checkpoint = tf.train.Checkpoint(buffer_current_state=self.buffer_current_state,
-                                     buffer_next_state=self.buffer_next_state,
-                                     buffer_action=self.buffer_action,
-                                     buffer_reward=self.buffer_reward,
-                                     buffer_lives=self.buffer_lives,
-                                     idx=self.idx)
-    
-    def add_transition(self, transition):
+    def add_frame(self, frame, action, reward, terminal):
         """
-        Adds new transition to replay memory.
-        
+        Adds a single new preprocessed frame and its metadata to the replay memory.
+
         Parameters:
-        - transition (tuple): The path where the data should be saved.
+        - frame: (84, 84) uint8 array, the newest frame only (not a stacked state).
+        - action (int): action that was taken and produced this frame (i.e. the action
+          taken from the *previous* state, not from the state this frame completes).
+        - reward (float): reward received for that action.
+        - terminal (bool): whether this frame ended the episode (lives == 0).
         """
-        current_state, next_state, action, reward, lives = transition
-        
-        # Update the counter and get the current index
-        self.idx.assign(tf.math.mod(self.idx, self.max_samples))
+        self.frames[self.idx] = frame
+        self.actions[self.idx] = action
+        self.rewards[self.idx] = reward
+        self.terminal[self.idx] = terminal
 
-        # Update the buffers
-        self.buffer_current_state[self.idx].assign(current_state)
-        self.buffer_next_state[self.idx].assign(next_state)
-        self.buffer_action[self.idx].assign(action)
-        self.buffer_reward[self.idx].assign(reward)
-        self.buffer_lives[self.idx].assign(lives)
+        self.idx = (self.idx + 1) % self.capacity
+        self.count = min(self.count + 1, self.capacity)
 
-        # Increment the counter
-        self.idx.assign_add(1)
-        self.num_of_exp.assign_add(1)
-    
-    def _batch_random(self):
+    def _get_state(self, index):
+        """Gathers the state_length consecutive frames ending at `index`."""
+        indices = [(index - offset) % self.capacity for offset in reversed(range(self.state_length))]
+        return self.frames[indices]
+
+    def _valid_index(self, index):
+        """
+        `index` names a stored (action, reward, terminal) triple, i.e. the transition
+        curr_state -> next_state where next_state is the state ending at `index` and
+        curr_state is the state ending at `index - 1` (see get_batch). It is samplable
+        only if state_length frames of history exist behind it - enough to build both
+        of those state windows - and none of those state_length preceding frames belong
+        to a different episode than `index` itself. `index` itself is allowed to be
+        terminal (it's the natural terminal transition), so it's excluded from that
+        check.
+
+        Before the buffer has wrapped, the oldest frame is at position 0. Once it has
+        wrapped, the oldest frame is at `self.idx` (the next slot due to be overwritten)
+        instead - the ring's chronological seam moves there, so history has to be
+        measured as distance from `self.idx`, not from a fixed 0.
+        """
+        oldest = 0 if self.count < self.capacity else self.idx
+        age_from_oldest = (index - oldest) % self.capacity
+        if age_from_oldest < self.state_length:
+            # not enough history behind index yet
+            return False
+
+        for offset in range(1, self.state_length + 1):
+            if self.terminal[(index - offset) % self.capacity]:
+                # window would mix frames from different episodes
+                return False
+
+        return True
+
+    def get_batch(self):
         """
         Creates a randomly picked training batch from memory.
+
+        For a sampled index `i`, actions[i]/rewards[i]/terminal[i] describe the
+        transition that produced frame i, i.e. curr_state -> next_state where
+        next_state is the state ending at i and curr_state is the state ending at
+        i - 1 (see add_frame).
         """
-        # Fix so empty transitions are not selected
-        maxval = tf.cond(
-            tf.math.less(self.num_of_exp, self.max_samples),
-            lambda: self.num_of_exp,
-            lambda: self.max_samples
+        upper_bound = self.count if self.count < self.capacity else self.capacity
+        indices = []
+        while len(indices) < self.batch_size:
+            candidate = int(randint(0, upper_bound))
+            if self._valid_index(candidate):
+                indices.append(candidate)
+
+        curr_states = stack([self._get_state((i - 1) % self.capacity) for i in indices])
+        next_states = stack([self._get_state(i) for i in indices])
+
+        return (
+            from_numpy(curr_states),
+            from_numpy(next_states),
+            from_numpy(self.actions[indices]),
+            from_numpy(self.rewards[indices]),
+            from_numpy(self.terminal[indices]),
         )
-
-        # randomly batch
-        indices = tf.random.uniform(shape=(self.batch_size,), maxval=maxval, dtype=tf.int32)
-        sampled_data = (
-            tf.gather(self.buffer_current_state, indices),
-            tf.gather(self.buffer_next_state, indices),
-            tf.gather(self.buffer_action, indices),
-            tf.gather(self.buffer_reward, indices),
-            tf.gather(self.buffer_lives, indices),
-        )
-
-        # Data will be returned as a tuple and not as tf.data.Dataset.
-        # The purpose of tf.data.Dataset is often more apparent when
-        # dealing with larger datasets that don't fit entirely into
-        # memory, and you want to leverage TensorFlow's efficient data
-        # loading and preprocessing capabilities.
-        # return tf.data.Dataset.from_tensor_slices(sampled_data).batch(self.batch_size)
-
-        return sampled_data
 
     def save_replay_memory(self, path):
         """
-        Saves the agents replay memory to disk.
-    
-        Parameters:
-        - path (str): The path where the data should be saved.
+        Saves the buffer arrays and write position to `path/replay_memory.npz`.
         """
-        self.checkpoint.save(path)
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        np.savez(
+            os.path.join(path, "replay_memory.npz"),
+            frames=self.frames,
+            actions=self.actions,
+            rewards=self.rewards,
+            terminal=self.terminal,
+            idx=self.idx,
+            count=self.count,
+        )
 
     def load_replay_memory(self, path):
         """
-        Loads the agents replay memory from disk.
-    
-        Parameters:
-        - path (str): The path frome where the data should be loaded.
+        Restores the buffer arrays and write position from `path/replay_memory.npz`.
         """
-        # Restore buffers from disk
-        status = self.checkpoint.restore(tf.train.latest_checkpoint(path))
+        file_path = os.path.join(path, "replay_memory.npz")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"No replay memory found at '{file_path}'.")
 
-        # Assign the restored values to the buffers
-        #self.buffer_current_state.assign(status.buffer_current_state)
-        #self.buffer_next_state.assign(status.buffer_next_state)
-        #self.buffer_action.assign(status.buffer_action)
-        #self.buffer_reward.assign(status.buffer_reward)
-        #self.buffer_lives.assign(status.buffer_lives)
-    
-    @property
-    def element_spec(self):
-        return (
-            tf.TensorSpec(shape=(84, 84, 4), dtype=tf.uint8),
-            tf.TensorSpec(shape=(84, 84, 4), dtype=tf.uint8),
-            tf.TensorSpec(shape=(), dtype=tf.int32),
-            tf.TensorSpec(shape=(), dtype=tf.float32),
-            tf.TensorSpec(shape=(), dtype=tf.int32),
-        )
+        data = np.load(file_path)
+        if data["frames"].shape != self.frames.shape:
+            raise ValueError(
+                f"Loaded replay memory shape {data['frames'].shape} doesn't match "
+                f"this buffer's configured shape {self.frames.shape}."
+            )
+
+        self.frames = data["frames"]
+        self.actions = data["actions"]
+        self.rewards = data["rewards"]
+        self.terminal = data["terminal"]
+        self.idx = int(data["idx"])
+        self.count = int(data["count"])

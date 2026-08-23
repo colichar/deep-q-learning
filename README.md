@@ -12,13 +12,13 @@ The `.venv` (Python 3.12) and `pyproject.toml`/`uv.lock` are managed with [uv](h
 
 ### Training
 
-`pytorch/scripts/train.py` is the entry point for starting a training run:
+`scripts/train.py` is the entry point for starting a training run:
 
 ```
-uv run python pytorch/scripts/train.py
+uv run python scripts/train.py
 ```
 
-Run `uv run python pytorch/scripts/train.py --help` for the full list of flags (learning rate, memory size,
+Run `uv run python scripts/train.py --help` for the full list of flags (learning rate, memory size,
 checkpointing, resuming from a saved run, etc.). The defaults already match the DeepMind 2015 (Nature) paper's
 hyperparameters (learning rate 2.5e-4, discount 0.99, minibatch 32, 1M-frame replay memory, 50k-frame warmup,
 target network synced every 10k frames).
@@ -29,11 +29,11 @@ target network synced every 10k frames).
 `eps=0.01`, `centered=True`). Example, training with RMSProp for 2M frames:
 
 ```
-uv run python pytorch/scripts/train.py \
+uv run python scripts/train.py \
   --optimizer rmsprop \
   --max-train-frames 2000000 \
-  --save-path pytorch/scripts/output-rmsprop \
-  --metrics-dir pytorch/scripts/output-rmsprop/metrics
+  --save-path scripts/output-rmsprop \
+  --metrics-dir scripts/output-rmsprop/metrics
 ```
 
 #### Checkpointing and resuming
@@ -46,11 +46,11 @@ checkpoint it less often than the rest since it's the expensive part).
 To continue a run from a saved checkpoint, pass `--resume-from <path>` pointing at that `--save-path`:
 
 ```
-uv run python pytorch/scripts/train.py \
+uv run python scripts/train.py \
   --optimizer rmsprop \
-  --resume-from pytorch/scripts/output-rmsprop \
-  --save-path pytorch/scripts/output-rmsprop \
-  --metrics-dir pytorch/scripts/output-rmsprop/metrics \
+  --resume-from scripts/output-rmsprop \
+  --save-path scripts/output-rmsprop \
+  --metrics-dir scripts/output-rmsprop/metrics \
   --max-train-frames 2000000
 ```
 
@@ -115,22 +115,18 @@ uv run AutoROM --accept-license -y
 
 This downloads to `.venv/lib/python3.12/site-packages/ale_py/roms/` and only needs to be re-run if `.venv` is recreated.
 
-### gym → gymnasium
-
-Current `ale-py` (0.12.x) dropped support for the legacy `gym` package and only registers environments with `gymnasium`. `pytorch/src/agent/agent.py` uses `import gymnasium as gym` + `gym.register_envs(ale_py)` accordingly — the older `import gym` (with `gym==0.26.2`/`ale-py==0.8.1`, as used by the TensorFlow implementation in `src/`) doesn't have wheels for Python 3.12.
-
 ### Tests
 
-Tests live in `pytorch/tests/` and run with `pytest` (a dev-only dependency — `uv add --dev <package>` to add more, they're kept out of the runtime `dependencies` list). `pyproject.toml`'s `[tool.pytest.ini_options]` puts `pytorch/` on the path so `from src....` imports resolve without a `conftest.py`. Unit and integration tests are split into separate directories, and the integration ones also carry an `integration` marker:
+Tests live in `tests/` and run with `pytest` (a dev-only dependency — `uv add --dev <package>` to add more, they're kept out of the runtime `dependencies` list). `pyproject.toml`'s `[tool.pytest.ini_options]` puts the repo root on the path so `from src....` imports resolve without a `conftest.py`. Unit and integration tests are split into separate directories, and the integration ones also carry an `integration` marker:
 
-- `pytorch/tests/unit/` (`test_replay_memory.py`) — fast, no gym env or real training involved.
-- `pytorch/tests/integration/` (`test_agent.py`) — spins up the real ALE env and runs actual (small-scale) training/save/load, so slower.
+- `tests/unit/` (`test_replay_memory.py`) — fast, no gym env or real training involved.
+- `tests/integration/` (`test_agent.py`) — spins up the real ALE env and runs actual (small-scale) training/save/load, so slower.
 
 ```
 uv run pytest                              # run everything
-uv run pytest pytorch/tests/unit           # unit tests only, by directory
+uv run pytest tests/unit           # unit tests only, by directory
 uv run pytest -m "not integration"         # unit tests only, by marker
-uv run pytest pytorch/tests/integration    # integration tests only, by directory
+uv run pytest tests/integration    # integration tests only, by directory
 uv run pytest -m integration               # integration tests only, by marker
 ```
 

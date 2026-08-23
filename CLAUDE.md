@@ -8,9 +8,8 @@ A from-scratch reimplementation of DeepMind's DQN Atari papers (Mnih et al. 2013
 `ALE/SpaceInvaders-v5`. The goal is to first replicate the papers' setup faithfully, then optimize for local
 hardware.
 
-**`pytorch/` is the active implementation — work here unless told otherwise.** The top-level `src/` directory
-(TensorFlow + legacy `gym`, driven from `space_invaders_dqn.ipynb`) is deprecated and slated for removal; don't
-extend it, and don't copy patterns from it into `pytorch/`.
+The implementation lives at the project root (`src/`, `scripts/`, `tests/`) and is PyTorch-based. An earlier
+TensorFlow implementation (driven from `space_invaders_dqn.ipynb`) has been removed; don't resurrect its patterns.
 
 ## Comments
 
@@ -33,11 +32,11 @@ uv sync --extra cpu                        # CPU-only machine
 uv sync --extra cuda                       # machine with an NVIDIA GPU
 uv run AutoROM --accept-license -y         # fetch the Space Invaders ROM (once per fresh .venv)
 uv run pytest                              # run all tests
-uv run pytest pytorch/tests/unit           # unit tests only (fast, no ALE env)
+uv run pytest tests/unit           # unit tests only (fast, no ALE env)
 uv run pytest -m "not integration"         # same, by marker
-uv run pytest pytorch/tests/integration    # integration tests only (real ALE env + short training run)
-uv run pytest pytorch/tests/unit/test_replay_memory.py::test_episode_boundaries   # single test
-uv run python pytorch/scripts/train.py     # start a training run; --help for the full flag list
+uv run pytest tests/integration    # integration tests only (real ALE env + short training run)
+uv run pytest tests/unit/test_replay_memory.py::test_episode_boundaries   # single test
+uv run python scripts/train.py     # start a training run; --help for the full flag list
 ```
 
 - `torch`/`torchvision` are optional extras (`cpu` vs `cuda`, mutually exclusive), not base dependencies — a bare
@@ -47,7 +46,7 @@ uv run python pytorch/scripts/train.py     # start a training run; --help for th
   install torch the first time — run an explicit `uv sync --extra ...` at least once per machine.
 - No linter/formatter is configured in this repo.
 
-## Architecture (`pytorch/src/`)
+## Architecture (`src/`)
 
 Training is orchestrated by `agent/agent.py:SpaceInvaderAgent`, which owns the env, both networks, memory, and the
 epsilon-greedy schedule, and wires them together each frame:
@@ -84,7 +83,7 @@ Key design points worth knowing before touching this code:
   rejects indices without `state_length` frames of real history behind them, and indices whose `state_length`
   preceding frames (not including `i` itself, which is allowed to be the terminal frame) cross an episode
   boundary (`terminal` flag). Any change to write/sample logic must keep both invariants intact — see
-  `pytorch/tests/unit/test_replay_memory.py` for the boundary/wraparound/alignment tests that guard this.
+  `tests/unit/test_replay_memory.py` for the boundary/wraparound/alignment tests that guard this.
 - **`utils/replay_memory_from_disk.py` (`ReplayMemoryFromDisk`) is an orphaned earlier design** (disk-backed
   `torch.utils.data.Dataset`) — it is not imported by the agent and predates the ring-buffer approach above. Treat
   it as historical, not as a second code path to keep in sync.
@@ -110,12 +109,11 @@ Key design points worth knowing before touching this code:
   resume across sessions on time-boxed compute (e.g. Kaggle's 9h session cap, see README "Results of first
   training"). `load_train_history` also restores `start_frame_num` so a resumed run continues the frame count
   instead of restarting it.
-- `gymnasium` + `ale-py` 0.12.x is what `pytorch/` uses (`import gymnasium as gym` + `gym.register_envs(ale_py)`);
-  the legacy `import gym` (`gym==0.26.2`/`ale-py==0.8.1`) is only used by the deprecated `src/` TensorFlow code and
-  has no Python 3.12 wheels — don't mix the two APIs.
+- Uses `gymnasium` + `ale-py` 0.12.x (`import gymnasium as gym` + `gym.register_envs(ale_py)`), not the legacy
+  `gym` package (`gym==0.26.2`/`ale-py==0.8.1` has no Python 3.12 wheels).
 
-## Tests (`pytorch/tests/`)
+## Tests (`tests/`)
 
 Split into `unit/` (no gym env, fast) and `integration/` (real ALE env + a small real training/save/load run,
-marked with the `integration` pytest marker). `pyproject.toml` puts `pytorch/` on `pythonpath`, so tests import via
-`from src....` without a `conftest.py`.
+marked with the `integration` pytest marker). `pyproject.toml` puts the repo root on `pythonpath`, so tests import
+via `from src....` without a `conftest.py`.
