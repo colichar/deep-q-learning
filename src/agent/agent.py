@@ -61,24 +61,32 @@ class ExplorationVsExploitation:
         else:
             return self.eps_final
 
-    def __call__(self, curr_state, frame_num: int = 0) -> int:
+    def __call__(self, curr_states, frame_num: int = 0):
         """
         When the object is called, it will return an action to be performed by the agent.
-        This action will either be an exploration of new possibilities or and exploitation
-        of the accumulated experience of the agent.
+        Accepts either a single state (C, H, W) or a batch of N states (N, C, H, W); each
+        state independently explores or exploits per the epsilon-greedy schedule, with the
+        exploiting states sharing a single forward pass through the main network. Returns a
+        single int for a single state, or an array of N ints for a batch.
         """
+        single_state = curr_states.dim() == 3
+        if single_state:
+            curr_states = curr_states.unsqueeze(0)
+
+        n = curr_states.shape[0]
         eps = self.get_epsilon(frame_num)
 
-        if random.random() < eps:
-            # we explore
-            return random.randint(self.n_actions)
-        else:
+        actions = random.randint(self.n_actions, size=n)
+        exploit_idx = np.where(random.random(n) >= eps)[0]
+
+        if len(exploit_idx) > 0:
             # we choose the action yielding the highest reward according to our main model
             model_prediction = self.dqn_model.best_action(
-                curr_state.to(self.dqn_model.device).float().div(255.0).unsqueeze(0)
+                curr_states[exploit_idx].to(self.dqn_model.device).float().div(255.0)
             )
-            model_prediction = int(model_prediction[0].cpu().numpy())
-            return model_prediction
+            actions[exploit_idx] = model_prediction.cpu().numpy()
+
+        return int(actions[0]) if single_state else actions
 
 
 class SpaceInvaderAgent:
