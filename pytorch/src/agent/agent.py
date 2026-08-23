@@ -100,7 +100,9 @@ class SpaceInvaderAgent:
             replay_checkpoint_freq=None,
             optimizer="adam",
     ):
-        self.my_env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, render_mode="rgb_array")
+        self.my_env = gym.make(
+            "ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array"
+        )
 
         self.start_frame_num = 0
 
