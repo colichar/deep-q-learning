@@ -72,6 +72,7 @@ def test_batched_epsilon_one_is_all_random_no_forward_pass():
 
 
 def test_batched_mixed_epsilon_splits_explore_and_exploit_per_env(monkeypatch):
+    """Monkeypatches shared numpy.random module attributes directly, so this test is not safe to run under parallel pytest execution (e.g. pytest-xdist)."""
     model = _make_model()
     batch = _make_batch(6)
     exploit_idx = [1, 3, 5]
