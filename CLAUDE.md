@@ -114,6 +114,7 @@ Key design points worth knowing before touching this code:
 
 ## Tests (`tests/`)
 
-Split into `unit/` (no gym env, fast) and `integration/` (real ALE env + a small real training/save/load run,
+Split into `unit/` (no ALE env or ROM, fast — a few do build a gymnasium vector env over scripted, ROM-free
+sub-envs) and `integration/` (real ALE env + a small real training/save/load run,
 marked with the `integration` pytest marker). `pyproject.toml` puts the repo root on `pythonpath`, so tests import
 via `from src....` without a `conftest.py`.
