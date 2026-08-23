@@ -12,6 +12,18 @@ hardware.
 (TensorFlow + legacy `gym`, driven from `space_invaders_dqn.ipynb`) is deprecated and slated for removal; don't
 extend it, and don't copy patterns from it into `pytorch/`.
 
+## Comments
+
+Write comments only when the code cannot explain itself: a non-obvious constraint, a subtle
+invariant, a specific bug being worked around, or a design decision whose reasoning isn't visible
+from the code alone. Never write a comment that restates what the line already says (e.g. `#
+prints hello world` above `print("hello world")`) — if removing the comment wouldn't confuse a
+future reader, don't write it.
+
+Keep it terse — one line, why-only. Don't explain the whole mechanism in the comment; trust the
+reader to follow the code itself.
+
+
 ## Commands
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/), not pip.
