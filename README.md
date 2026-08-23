@@ -25,9 +25,8 @@ target network synced every 10k frames).
 
 #### Optimizer
 
-`--optimizer` selects `adam` (default) or `rmsprop`. `rmsprop` uses the paper's RMSProp settings (gradient
-momentum 0.95, squared gradient momentum 0.95, min squared gradient 0.01) rather than PyTorch's RMSprop defaults
-— no extra flags needed to get those. Example, training with RMSProp for 2M frames:
+`--optimizer` selects `adam` (default) or `rmsprop`. `rmsprop` uses the paper's *centered* RMSProp (`alpha=0.95`,
+`eps=0.01`, `centered=True`). Example, training with RMSProp for 2M frames:
 
 ```
 uv run python pytorch/scripts/train.py \

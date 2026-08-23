@@ -24,8 +24,8 @@ def parse_args():
                          help="Learning rate for the main model's optimizer.")
     parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "rmsprop"],
                          help="Optimizer for the main model. 'rmsprop' uses the DeepMind Nature paper's "
-                              "RMSProp hyperparameters (gradient momentum 0.95, squared gradient momentum "
-                              "0.95, min squared gradient 0.01), not PyTorch's RMSprop defaults. Note: "
+                              "centered RMSProp (gradient momentum / squared gradient momentum 0.95, min "
+                              "squared gradient 0.01), not PyTorch's RMSprop defaults. Note: "
                               "--resume-from requires the same optimizer as the checkpoint being loaded, "
                               "since optimizer state (e.g. Adam's moment estimates) isn't portable "
                               "between optimizer types.")

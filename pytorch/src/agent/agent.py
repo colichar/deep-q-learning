@@ -503,6 +503,9 @@ class SpaceInvaderAgent:
         self.averaged_losses = train_history["averaged_losses"]
         self.frame_nums = train_history["frame_nums"]
         self.rewards = train_history["rewards"]
+        # Reset the log-print cursor to the end of the restored history, so the first log line
+        # after resuming averages only newly-finished episodes, not the whole pre-resume history.
+        self._logged_reward_idx = len(self.rewards)
         # .get(..., 0.0) for backward compatibility with pickles saved before this field existed.
         self.cumulative_wall_clock_seconds = train_history.get("cumulative_wall_clock_seconds", 0.0)
 

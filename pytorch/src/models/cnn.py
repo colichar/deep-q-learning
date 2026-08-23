@@ -27,7 +27,7 @@ class CNNModelPY(Module):
         if optimizer == "adam":
             self.optimizer = Adam(self.parameters(), lr=learning_rate)
         elif optimizer == "rmsprop":
-            self.optimizer = RMSprop(self.parameters(), lr=learning_rate, alpha=0.95, momentum=0.95, eps=0.01)
+            self.optimizer = RMSprop(self.parameters(), lr=learning_rate, alpha=0.95, eps=0.01, centered=True)
         else:
             raise ValueError(f"Unknown optimizer '{optimizer}', expected 'adam' or 'rmsprop'.")
 

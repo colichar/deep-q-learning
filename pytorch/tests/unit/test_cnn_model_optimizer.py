@@ -19,8 +19,9 @@ def test_optimizer_rmsprop_uses_deepmind_hyperparameters():
 
     params = model.optimizer.defaults
     assert params["alpha"] == 0.95
-    assert params["momentum"] == 0.95
     assert params["eps"] == 0.01
+    assert params["centered"] is True
+    assert params["momentum"] == 0
 
 
 def test_unknown_optimizer_raises():
