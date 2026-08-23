@@ -41,7 +41,7 @@ def parse_args():
                          help="Train the main model every N frames.")
     parser.add_argument("--update-target-freq", type=int, default=10_000,
                          help="Sync the target model's weights from the main model every N frames.")
-    parser.add_argument("--log-freq", type=int, default=2_000,
+    parser.add_argument("--log-freq", type=int, default=10_000,
                          help="Print a training progress line every N frames.")
     parser.add_argument("--average-loss-freq", type=int, default=400,
                          help="Average and record the loss over the last N frames.")

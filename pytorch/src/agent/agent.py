@@ -91,7 +91,7 @@ class SpaceInvaderAgent:
             max_train_frames=60_000,  # > memory_warmup so a default run actually logs something
             update_main_freq=4,
             update_target_freq=10_000,
-            log_freq=0.2 * 10 ** 4,
+            log_freq=10_000,
             average_loss_freq=400,  # 20
             discount=0.99,
             metrics_dir=None,
@@ -140,6 +140,7 @@ class SpaceInvaderAgent:
         self.frame_nums = []
         self.averaged_losses = []
         self.rewards = []
+        self._logged_reward_idx = 0  # index into self.rewards not yet folded into a log print
         self.cumulative_wall_clock_seconds = 0.0
 
         self.eval_rewards = []
@@ -248,7 +249,13 @@ class SpaceInvaderAgent:
                     self.losses = []
 
                     if frame_num % self.log_freq == 0:
-                        print("Finished", frame_num, "frames. Loss:", self.averaged_losses[-1])
+                        recent_rewards = self.rewards[self._logged_reward_idx:]
+                        self._logged_reward_idx = len(self.rewards)
+                        avg_reward = f"{mean(recent_rewards):.2f}" if recent_rewards else "n/a (no episode finished yet)"
+                        print(
+                            f"Finished {frame_num} frames. Loss: {self.averaged_losses[-1]:.6f}. "
+                            f"Avg episode reward: {avg_reward}"
+                        )
                         if loss_csv_path:
                             self._append_csv_row(loss_csv_path, [frame_num, self.averaged_losses[-1]])
 
