@@ -1,7 +1,7 @@
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchvision.transforms.v2 import Resize
 from torch import cat, tensor
-from numpy import maximum
+from numpy import maximum, zeros
 from numpy.random import randint
 
 
@@ -46,6 +46,60 @@ class Preprocessor:
         maxed_obs = maximum(frames[-2], frames[-1])
 
         return maxed_obs, total_reward, terminated, truncated, info
+
+    def step_with_skip_vec(self, vec_env, actions, skip=None):
+        """
+        Vectorized `step_with_skip`, for a gymnasium vector env in `NEXT_STEP`
+        auto-reset mode. Repeats `actions` for `skip` real ALE frames and returns
+        one flicker-reduced observation per sub-env, plus per-sub-env reward /
+        terminated / truncated arrays.
+
+        Each sub-env is frozen at the frame on which it reports done: its reward
+        stops accumulating and its two maxed frames stay the last two of the episode
+        that just ended. Under `NEXT_STEP` auto-reset the vector env keeps producing
+        frames for that sub-env within the same group (first the reset observation,
+        then real steps of the *next* episode), and maxing a terminal frame against
+        one of those would silently splice two episodes together.
+
+        `info` is the vector env's info from the last sub-step taken, so its entries
+        for a sub-env that ended mid-group already describe that sub-env's new
+        episode - the returned masks, not `info`, mark the episode boundary.
+        """
+        skip = self.frame_skip if skip is None else skip
+
+        num_envs = vec_env.num_envs
+        total_rewards = zeros(num_envs)
+        terminated = zeros(num_envs, dtype=bool)
+        truncated = zeros(num_envs, dtype=bool)
+        done = zeros(num_envs, dtype=bool)
+
+        prev_frames = last_frames = None
+        info = {}
+
+        for _ in range(skip):
+            obs, rewards, step_terminated, step_truncated, info = vec_env.step(actions)
+            live = ~done
+
+            if last_frames is None:
+                # first frame of the group has nothing to pair with yet, so a sub-env
+                # ending here maxes against itself (same as the single-env path)
+                prev_frames = obs.copy()
+                last_frames = obs.copy()
+            else:
+                prev_frames[live] = last_frames[live]
+                last_frames[live] = obs[live]
+
+            total_rewards[live] += rewards[live]
+            terminated |= step_terminated & live
+            truncated |= step_truncated & live
+            done = terminated | truncated
+
+            if done.all():
+                break
+
+        maxed_obs = maximum(prev_frames, last_frames)
+
+        return maxed_obs, total_rewards, terminated, truncated, info
 
     def initialize_state(self, env):
         """
