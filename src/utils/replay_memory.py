@@ -115,8 +115,13 @@ class ReplayMemory:
         if not os.path.exists(path):
             os.makedirs(path)
 
+        # Write to a temp file and rename into place:
+        # an interrupted in-place np.savez (Ctrl+C, kill, crash) leaves a truncated .npz
+        # that fails with a bad-CRC error on the next load instead of a clean "file missing".
+        final_path = os.path.join(path, "replay_memory.npz")
+        tmp_path = os.path.join(path, "replay_memory.tmp.npz")
         np.savez(
-            os.path.join(path, "replay_memory.npz"),
+            tmp_path,
             frames=self.frames,
             actions=self.actions,
             rewards=self.rewards,
@@ -124,6 +129,7 @@ class ReplayMemory:
             idx=self.idx,
             count=self.count,
         )
+        os.replace(tmp_path, final_path)
 
     def load_replay_memory(self, path):
         """

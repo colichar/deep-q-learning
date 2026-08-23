@@ -463,15 +463,13 @@ class SpaceInvaderAgent:
         print('Loading replay memory from disk...')
         try:
             self.load_replay_memory(path + '/replay_memory')
-        except FileNotFoundError as e:
-            raise FileNotFoundError(
+            print('Replay memory loaded.')
+        except FileNotFoundError:
+            print(
                 f"No replay-memory snapshot found under '{path}/replay_memory' (possible with "
                 "replay_checkpoint_freq > checkpoint_freq if this checkpoint was written before "
-                "the first replay-memory save). Resume from a checkpoint that has one, start a "
-                "fresh run, or call load_model()/load_train_history() directly if you only need "
-                "the model weights."
-            ) from e
-        print('Replay memory loaded.')
+                "the first replay-memory save). Continuing with a freshly initialized, empty replay memory."
+            )
         print('Loading model weights and training history from disk...')
         self.load_model(path + '/model')
         self.load_train_history(path + '/history')
