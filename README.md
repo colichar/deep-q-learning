@@ -19,7 +19,54 @@ uv run python pytorch/scripts/train.py
 ```
 
 Run `uv run python pytorch/scripts/train.py --help` for the full list of flags (learning rate, memory size,
-checkpointing, resuming from a saved run, etc.).
+checkpointing, resuming from a saved run, etc.). The defaults already match the DeepMind 2015 (Nature) paper's
+hyperparameters (learning rate 2.5e-4, discount 0.99, minibatch 32, 1M-frame replay memory, 50k-frame warmup,
+target network synced every 10k frames).
+
+#### Optimizer
+
+`--optimizer` selects `adam` (default) or `rmsprop`. `rmsprop` uses the paper's RMSProp settings (gradient
+momentum 0.95, squared gradient momentum 0.95, min squared gradient 0.01) rather than PyTorch's RMSprop defaults
+— no extra flags needed to get those. Example, training with RMSProp for 2M frames:
+
+```
+uv run python pytorch/scripts/train.py \
+  --optimizer rmsprop \
+  --max-train-frames 2000000 \
+  --save-path pytorch/scripts/output-rmsprop \
+  --metrics-dir pytorch/scripts/output-rmsprop/metrics
+```
+
+#### Checkpointing and resuming
+
+`--save-path` is a directory that ends up holding three independent pieces of state: the replay memory
+(`replay_memory/`), model + optimizer weights (`model/`), and training history (`history/`), written every
+`--checkpoint-freq` frames (or `--replay-checkpoint-freq` for the replay memory specifically, if you want to
+checkpoint it less often than the rest since it's the expensive part).
+
+To continue a run from a saved checkpoint, pass `--resume-from <path>` pointing at that `--save-path`:
+
+```
+uv run python pytorch/scripts/train.py \
+  --optimizer rmsprop \
+  --resume-from pytorch/scripts/output-rmsprop \
+  --save-path pytorch/scripts/output-rmsprop \
+  --metrics-dir pytorch/scripts/output-rmsprop/metrics \
+  --max-train-frames 2000000
+```
+
+A few things to know about resuming:
+
+- `--optimizer` must match the checkpoint's optimizer — Adam's and RMSProp's saved optimizer state aren't
+  interchangeable.
+- `--memory-size` must match the checkpoint's replay memory size — it's validated against the saved buffer's
+  shape and the load fails otherwise. Leave it unset (default) unless you also set it explicitly on the original
+  run.
+- `--max-train-frames` is the number of *additional* frames to train this session, not the new total — a run
+  resumed at frame 2,000,000 with `--max-train-frames 2000000` trains up to frame 4,000,000, not back to
+  2,000,000.
+- The other hyperparameters (learning rate, discount, batch size, etc.) aren't re-validated on resume, but keep
+  them the same as the original run unless you're intentionally changing the training regime mid-run.
 
 ### CPU vs GPU torch
 
