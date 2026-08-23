@@ -5,7 +5,7 @@ sub-buffers, one per parallel env - see issue #26 / epic #25).
 import numpy as np
 import pytest
 
-from src.utils.vectorized_replay_memory import VectorizedReplayMemory
+from src.utils.replay_memory import VectorizedReplayMemory
 
 
 def _fill_with_episodes(vmem, capacity_per_env, num_writes, seed=0):
@@ -61,6 +61,15 @@ def test_capacity_split_across_subbuffers():
     assert len(vmem.buffers) == num_envs
     for buffer in vmem.buffers:
         assert buffer.capacity == capacity // num_envs
+
+
+def test_num_envs_one_keeps_full_capacity_and_batch_size():
+    # num_envs=1 must be behaviorally unchanged from a single ReplayMemory (epic #25).
+    vmem = VectorizedReplayMemory(num_envs=1, capacity=1000, batch_size=32)
+
+    assert len(vmem.buffers) == 1
+    assert vmem.buffers[0].capacity == 1000
+    assert vmem.buffers[0].batch_size == 32
 
 
 def test_batch_size_split_across_subbuffers():
