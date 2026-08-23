@@ -31,7 +31,7 @@ class ExplorationVsExploitation:
                  n_actions: int,
                  eps_initial: float = 1.0,
                  eps_final: float = 0.1,
-                 start_fr: int = 5000,
+                 start_fr: int = 0,
                  end_fr: int = 1000000,
                  evaluation: bool = False):
         """

@@ -93,7 +93,12 @@ Key design points worth knowing before touching this code:
   this (see `feea0db` in git log for the rationale). Don't reintroduce ALE-internal frameskip alongside this.
 - **A lost life is treated as terminal** for replay-memory purposes (`life_lost or not alive` in
   `SpaceInvaderAgent.train`), matching the DeepMind papers, even though the episode/env itself continues until all
-  lives are gone.
+  lives are gone. The *live* `curr_state` used for action selection is deliberately **not** reset on life loss —
+  `Preprocessor.new_state` always shifts-and-appends, so for up to 3 frames after a respawn the acting stack still
+  contains pre-death frames. This is intentional, not an oversight: replay sampling is unaffected (`_valid_index`
+  already excludes any window crossing a `terminal` frame), and resetting the acting stack to a repeated single
+  frame would erase motion/velocity cues right when they matter most. Matches common practice in other DQN
+  implementations (e.g. OpenAI Baselines' `EpisodicLifeEnv` + frame-stack combo behaves the same way).
 - **Reward is clipped to {-1, 0, 1}** before being stored, per the papers; `episode_reward` (used for logging/plots)
   tracks the raw, unclipped reward separately.
 - Default hyperparameters on `SpaceInvaderAgent.__init__` are set to match the DeepMind 2015 paper (1M-frame memory,
