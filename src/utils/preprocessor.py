@@ -64,6 +64,18 @@ class Preprocessor:
         `info` is the vector env's info from the last sub-step taken, so its entries
         for a sub-env that ended mid-group already describe that sub-env's new
         episode - the returned masks, not `info`, mark the episode boundary.
+
+        Two things are deliberately left for issue #29, which wires this into the
+        training loop. First, `SpaceInvaderAgent.train` currently derives the replay
+        memory's `terminal` flag purely from `info["lives"]` and never looks at
+        `terminated`/`truncated`; porting that pattern as-is would read the *next*
+        episode's `info` for a sub-env that ended mid-group, mis-tag terminal frames and
+        let `ReplayMemory` sample across an episode boundary. Second, under `NEXT_STEP`
+        auto-reset a new episode's first `skip - k` frames are consumed inside the group
+        where the previous episode ended, so this method never returns a fresh episode's
+        reset frame the way `initialize_state` does for the single-env path.
+        TODO(#29): remove this note once both points above are handled in the vectorized
+        training loop.
         """
         skip = self.frame_skip if skip is None else skip
 
