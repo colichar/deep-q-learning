@@ -233,18 +233,22 @@ class SpaceInvaderAgent:
                 # store new frame
                 self.ReplayMemory.add_frame(new_frame, curr_action, reward, terminal=life_lost or not alive)
 
+                # Gate on actual replay-memory content, not frame_num:
+                # This way new memory warmup when old replay memory not available
+                warmed_up = self.ReplayMemory.count > self.memory_warmup
+
                 # perform weights update for main model
-                if frame_num % self.update_main_freq == 0 and frame_num > self.memory_warmup:
+                if frame_num % self.update_main_freq == 0 and warmed_up:
                     loss = self.update_step()
                     self.losses.append(loss.item())
 
                 # perform weights update for target model
-                if frame_num % self.update_target_freq == 0 and frame_num > self.memory_warmup:
+                if frame_num % self.update_target_freq == 0 and warmed_up:
                     self.TargetModel.set_weights(self.MainModel.get_weights())
                     print("Updating target model...")
 
                 # averaging past losses
-                if frame_num % self.average_loss_freq == 0 and frame_num > self.memory_warmup:
+                if frame_num % self.average_loss_freq == 0 and warmed_up:
                     self.frame_nums.append(frame_num)
                     self.averaged_losses.append(mean(self.losses))
 

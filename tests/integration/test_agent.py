@@ -75,6 +75,23 @@ def test_train_writes_periodic_checkpoint_resumable(tmp_path):
     assert len(resumed.rewards) > 0
 
 
+def test_train_gates_updates_on_replay_memory_content_not_frame_num():
+    """
+    A resumed run with an empty replay memory (e.g. after a corrupt/missing snapshot) but a
+    frame counter already past memory_warmup must not call update_step() before enough real
+    frames exist - doing so hangs forever, since get_batch() can never find a valid index in
+    a near-empty buffer.
+    """
+    agent = SpaceInvaderAgent(**AGENT_KWARGS)
+    agent.start_frame_num = AGENT_KWARGS["memory_warmup"] * 10
+    agent.max_train_frames = 50
+
+    agent.train()  # hangs before the fix; must return quickly instead
+
+    assert agent.ReplayMemory.count == 50
+    assert agent.averaged_losses == []
+
+
 def test_agent_resumes_from_saved_checkpoint(tmp_path):
     agent = SpaceInvaderAgent(**AGENT_KWARGS)
     agent.train()
