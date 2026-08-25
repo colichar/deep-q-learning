@@ -21,7 +21,7 @@ def parse_args():
 
     parser.add_argument("--learning-rate", type=float, default=0.00025,
                          help="Learning rate for the main model's optimizer.")
-    parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "rmsprop"],
+    parser.add_argument("--optimizer", type=str, default="rmsprop", choices=["adam", "rmsprop"],
                          help="Optimizer for the main model. 'rmsprop' uses the DeepMind Nature paper's "
                               "centered RMSProp (gradient momentum / squared gradient momentum 0.95, min "
                               "squared gradient 0.01), not PyTorch's RMSprop defaults. Note: "
