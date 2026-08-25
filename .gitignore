@@ -3,7 +3,6 @@ roms
 .ipynb_checkpoints
 
 # Virtual environment
-dqn
 .venv
 
 # Byte-compiled / optimized / DLL files
@@ -15,8 +14,6 @@ __pycache__/
 .idea
 checkpoints
 checkpoint
-kaggle
-images
 *.prof
 .pytest_cache
 scripts/output*
