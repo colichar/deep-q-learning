@@ -17,5 +17,6 @@ checkpoint
 *.prof
 .pytest_cache
 scripts/output*
+huggingface/
 
 .env

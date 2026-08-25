@@ -80,3 +80,6 @@ uv run pytest tests/integration  # integration tests only (real ALE env, small t
 ## References
 - [Playing Atari with Deep Reinforcment Learning, V. Mnih et al (2013)](https://arxiv.org/pdf/1312.5602.pdf)
 - [Human-level control through deep reinforcement learning, V. Mnih et al (2015)](https://www.nature.com/articles/nature14236/)
+
+## License
+[MIT](./LICENSE)
