@@ -1,7 +1,7 @@
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchvision.transforms.v2 import Resize
-from torch import cat, tensor
-from numpy import maximum, zeros
+from torch import cat, tensor, stack
+from numpy import maximum, zeros, int64
 from numpy.random import randint
 
 
@@ -61,21 +61,12 @@ class Preprocessor:
         then real steps of the *next* episode), and maxing a terminal frame against
         one of those would silently splice two episodes together.
 
-        `info` is the vector env's info from the last sub-step taken, so its entries
-        for a sub-env that ended mid-group already describe that sub-env's new
-        episode - the returned masks, not `info`, mark the episode boundary.
-
-        Two things are deliberately left for issue #29, which wires this into the
-        training loop. First, `SpaceInvaderAgent.train` currently derives the replay
-        memory's `terminal` flag purely from `info["lives"]` and never looks at
-        `terminated`/`truncated`; porting that pattern as-is would read the *next*
-        episode's `info` for a sub-env that ended mid-group, mis-tag terminal frames and
-        let `ReplayMemory` sample across an episode boundary. Second, under `NEXT_STEP`
-        auto-reset a new episode's first `skip - k` frames are consumed inside the group
-        where the previous episode ended, so this method never returns a fresh episode's
-        reset frame the way `initialize_state` does for the single-env path.
-        TODO(#29): remove this note once both points above are handled in the vectorized
-        training loop.
+        `info` is the vector env's info from the last sub-step taken, with `lives`
+        overwritten to be frozen the same way the frames are: for a sub-env that ended
+        mid-group, `info["lives"]` reflects the episode that just ended, not the reset
+        frames of the next one that gymnasium hands back for the rest of the group
+        (`SpaceInvaderAgent.train` uses this, matching the single-env path's `info["lives"]`
+        life-loss detection, exactly as issue #29 needed).
         """
         skip = self.frame_skip if skip is None else skip
 
@@ -86,6 +77,7 @@ class Preprocessor:
         done = zeros(num_envs, dtype=bool)
 
         prev_frames = last_frames = None
+        frozen_lives = None
         info = {}
 
         for _ in range(skip):
@@ -101,6 +93,12 @@ class Preprocessor:
                 prev_frames[live] = last_frames[live]
                 last_frames[live] = obs[live]
 
+            if "lives" in info:
+                if frozen_lives is None:
+                    frozen_lives = info["lives"].copy()
+                else:
+                    frozen_lives[live] = info["lives"][live]
+
             total_rewards[live] += rewards[live]
             terminated |= step_terminated & live
             truncated |= step_truncated & live
@@ -110,6 +108,10 @@ class Preprocessor:
                 break
 
         maxed_obs = maximum(prev_frames, last_frames)
+
+        if frozen_lives is not None:
+            info = dict(info)
+            info["lives"] = frozen_lives
 
         return maxed_obs, total_rewards, terminated, truncated, info
 
@@ -135,6 +137,31 @@ class Preprocessor:
         processed_frames = [self.preprocess_frame(frame) for frame in maxed_frames]
 
         return cat(processed_frames, axis=0), info
+
+    def initialize_state_vec(self, vec_env):
+        """
+        Vectorized `initialize_state`: builds the first stacked state (num_envs, 4, H, W)
+        for every sub-env at once, from one shared randomized no-op warmup (all sub-envs
+        take the same number of no-op groups, rather than staggering per-env - simpler,
+        and still randomizes the start point run to run).
+        """
+        vec_env.reset()
+        n_groups = randint(4, 31)
+        noop_actions = zeros(vec_env.num_envs, dtype=int64)
+
+        maxed_frames = []
+        info = {}
+        for _ in range(n_groups):
+            maxed_obs, _, _, _, info = self.step_with_skip_vec(vec_env, noop_actions)
+            maxed_frames.append(maxed_obs)
+
+        maxed_frames = maxed_frames[-4:]
+        stacked_states = [
+            cat([self.preprocess_frame(frame[env_i]) for frame in maxed_frames], axis=0)
+            for env_i in range(vec_env.num_envs)
+        ]
+
+        return stack(stacked_states), info
 
     def crop_frame(self,
                    frame,
@@ -170,3 +197,14 @@ class Preprocessor:
         new_stacked_state = cat([old_state[1:, ::, ::], processed_fr], axis=0)
 
         return new_stacked_state, processed_fr.squeeze(0)
+
+    def new_state_vec(self, new_raw_obs, old_states):
+        """
+        Vectorized `new_state`: `new_raw_obs` is (num_envs, H, W, C), `old_states` is
+        (num_envs, 4, H, W). Also returns the new frames on their own (num_envs, H, W),
+        so they can be stored directly in the replay memory.
+        """
+        processed = stack([self.preprocess_frame(frame) for frame in new_raw_obs])
+        new_stacked_states = cat([old_states[:, 1:], processed], dim=1)
+
+        return new_stacked_states, processed.squeeze(1)

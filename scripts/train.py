@@ -46,6 +46,11 @@ def parse_args():
                          help="Average and record the loss over the last N frames.")
     parser.add_argument("--discount", type=float, default=0.99,
                          help="Discount factor (gamma) used in the Q-learning target.")
+    parser.add_argument("--num-envs", type=int, default=1,
+                         help="Number of parallel ALE sub-envs to train against. 1 uses a "
+                              "SyncVectorEnv (single-env behavior); >1 uses a subprocess-based "
+                              "AsyncVectorEnv. --memory-size is split evenly across sub-envs, "
+                              "not multiplied by N.")
 
     parser.add_argument("--resume-from", type=str, default=None,
                          help="Path to a checkpoint directory to resume training from.")
@@ -87,6 +92,7 @@ def main():
         checkpoint_path=args.save_path,
         replay_checkpoint_freq=args.replay_checkpoint_freq,
         optimizer=args.optimizer,
+        num_envs=args.num_envs,
     )
 
     print(f"Using device: {agent.device}")

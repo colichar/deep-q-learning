@@ -1,14 +1,15 @@
 from src.utils.preprocessor import Preprocessor
-from src.utils.replay_memory import ReplayMemory
+from src.utils.replay_memory import VectorizedReplayMemory
 from src.models.cnn import CNNModelPY
 
 import gymnasium as gym
 import ale_py
+from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
 from torch import where, no_grad, tensor, device as torch_device
 from torch.cuda import is_available
 from torchvision.transforms import Resize
 import numpy as np
-from numpy import mean, random, uint8, array
+from numpy import mean, random, uint8, array, zeros as np_zeros, sign
 import matplotlib.pyplot as plt
 from PIL import Image
 import csv
@@ -18,6 +19,12 @@ import pickle
 import time
 
 gym.register_envs(ale_py)
+
+
+def _make_space_invaders_env():
+    # Module-level (not a lambda/closure) so AsyncVectorEnv's subprocess workers can
+    # pickle it under any multiprocessing start method, not just fork.
+    return gym.make("ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array")
 
 
 class ExplorationVsExploitation:
@@ -107,10 +114,16 @@ class SpaceInvaderAgent:
             checkpoint_path=None,
             replay_checkpoint_freq=None,
             optimizer="adam",
+            num_envs=1,
     ):
+        # Kept as a standalone single env for evaluate()'s gif-recording eval loop,
+        # independent of the vectorized training envs below.
         self.my_env = gym.make(
             "ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array"
         )
+
+        self.num_envs = num_envs
+        self.vec_env = self._make_vec_env(num_envs)
 
         self.start_frame_num = 0
 
@@ -142,7 +155,7 @@ class SpaceInvaderAgent:
         self.TargetModel.set_weights(self.MainModel.get_weights())
 
         self.Preprocessor = Preprocessor()
-        self.ReplayMemory = ReplayMemory(self.memory_size, self.batch_size)
+        self.ReplayMemory = VectorizedReplayMemory(self.num_envs, self.memory_size, self.batch_size)
         self.ExploreVsExploit = ExplorationVsExploitation(self.MainModel, self.my_env.action_space.n)
 
         self.losses = []
@@ -155,6 +168,26 @@ class SpaceInvaderAgent:
 
         self.eval_rewards = []
         self.frames_for_gif = []
+
+    @staticmethod
+    def _make_vec_env(num_envs):
+        """SyncVectorEnv at num_envs == 1 keeps single-env training behaviorally identical
+        (no subprocess indirection); AsyncVectorEnv (subprocess-based) is used for N > 1
+        so N sub-envs actually step in parallel."""
+        env_fns = [_make_space_invaders_env for _ in range(num_envs)]
+        return SyncVectorEnv(env_fns) if num_envs == 1 else AsyncVectorEnv(env_fns)
+
+    @staticmethod
+    def _freq_due(frame_num, num_envs, freq):
+        """
+        Whether a frequency-gated action (originally `frame_num % freq == 0`, back when
+        frame_num advanced by 1 per tick) fires for the tick that advances the frame
+        counter from `frame_num` through `frame_num + num_envs - 1`. Gating on an exact
+        multiple would silently skip past a threshold whenever freq isn't itself a
+        multiple of num_envs, so this fires once per threshold actually crossed within
+        the tick instead. Reduces to `frame_num % freq == 0` when num_envs == 1.
+        """
+        return (frame_num - 1) // freq != (frame_num + num_envs - 1) // freq
 
     def update_step(self):
         minibatch = self.ReplayMemory.get_batch()
@@ -211,58 +244,70 @@ class SpaceInvaderAgent:
         episode_num = len(self.rewards)
 
         frame_num = self.start_frame_num + 1
+        budget_end = self.max_train_frames + self.start_frame_num
 
-        while (frame_num <= self.max_train_frames + self.start_frame_num):
-            episode_reward = 0
+        # Guarded by the budget check up front, not inside the loop: a zero-frame budget
+        # (e.g. a resumed run with nothing left to do) must not touch self.Preprocessor /
+        # self.vec_env at all, since a bare-constructed agent (see test_agent_metrics_guard)
+        # may not have them set.
+        if frame_num <= budget_end:
+            curr_states, info = self.Preprocessor.initialize_state_vec(self.vec_env)
+            prev_lives = array(info["lives"])
+            episode_rewards = np_zeros(self.num_envs)
+            # Tracks whether each env's running episode_rewards was just flushed this tick,
+            # so the leftover-flush below (mirroring the single-env loop's original behavior
+            # of always recording whatever's accumulated once the frame budget runs out, even
+            # mid-episode) doesn't double-record an env that happened to finish on the very
+            # last tick processed.
+            flushed_this_tick = np.zeros(self.num_envs, dtype=bool)
 
-            curr_state, info = self.Preprocessor.initialize_state(self.my_env)
-            prev_lives = info["lives"]
-            alive = True
+            while frame_num <= budget_end:
+                # take actions, one per sub-env
+                curr_actions = self.ExploreVsExploit(curr_states, frame_num)
 
-            while alive:
-                # take action
-                curr_action = self.ExploreVsExploit(curr_state, frame_num)
-
-                new_raw_obs, reward, terminated, truncated, info = self.Preprocessor.step_with_skip(
-                    self.my_env, curr_action
+                new_raw_obs, rewards, terminated, truncated, info = self.Preprocessor.step_with_skip_vec(
+                    self.vec_env, curr_actions
                 )
 
-                alive = info["lives"] != 0
-                life_lost = info["lives"] < prev_lives
-                prev_lives = info["lives"]
+                lives = array(info["lives"])
+                alive = lives != 0
+                life_lost = lives < prev_lives
+                prev_lives = lives
 
-                episode_reward += reward
+                episode_rewards += rewards
 
-                reward = 1 if reward > 0 else -1 if reward < 0 else 0
+                clipped_rewards = sign(rewards)
 
-                # create new sequence with new frame
-                new_state, new_frame = self.Preprocessor.new_state(new_raw_obs, curr_state)
+                # create new sequences with the new frames
+                new_states, new_frames = self.Preprocessor.new_state_vec(new_raw_obs, curr_states)
 
-                # store new frame
-                self.ReplayMemory.add_frame(new_frame, curr_action, reward, terminal=life_lost or not alive)
+                # store new frames, one per sub-env
+                self.ReplayMemory.add_frames(
+                    new_frames.numpy(), curr_actions, clipped_rewards, life_lost | ~alive
+                )
 
                 # Gate on actual replay-memory content, not frame_num:
                 # This way new memory warmup when old replay memory not available
                 warmed_up = self.ReplayMemory.count > self.memory_warmup
 
                 # perform weights update for main model
-                if frame_num % self.update_main_freq == 0 and warmed_up:
+                if self._freq_due(frame_num, self.num_envs, self.update_main_freq) and warmed_up:
                     loss = self.update_step()
                     self.losses.append(loss.item())
 
                 # perform weights update for target model
-                if frame_num % self.update_target_freq == 0 and warmed_up:
+                if self._freq_due(frame_num, self.num_envs, self.update_target_freq) and warmed_up:
                     self.TargetModel.set_weights(self.MainModel.get_weights())
                     print("Updating target model...")
 
                 # averaging past losses
-                if frame_num % self.average_loss_freq == 0 and warmed_up:
+                if self._freq_due(frame_num, self.num_envs, self.average_loss_freq) and warmed_up:
                     self.frame_nums.append(frame_num)
                     self.averaged_losses.append(mean(self.losses))
 
                     self.losses = []
 
-                    if frame_num % self.log_freq == 0:
+                    if self._freq_due(frame_num, self.num_envs, self.log_freq):
                         recent_rewards = self.rewards[self._logged_reward_idx:]
                         self._logged_reward_idx = len(self.rewards)
                         avg_reward = f"{mean(recent_rewards):.2f}" if recent_rewards else "n/a (no episode finished yet)"
@@ -273,9 +318,9 @@ class SpaceInvaderAgent:
                         if loss_csv_path:
                             self._append_csv_row(loss_csv_path, [frame_num, self.averaged_losses[-1]])
 
-                if self.checkpoint_path and frame_num % self.checkpoint_freq == 0:
+                if self.checkpoint_path and self._freq_due(frame_num, self.num_envs, self.checkpoint_freq):
                     print(f"Checkpointing at frame {frame_num}...")
-                    write_replay = frame_num % self.replay_checkpoint_freq == 0
+                    write_replay = self._freq_due(frame_num, self.num_envs, self.replay_checkpoint_freq)
                     # Fold elapsed time in before saving, and reset session_start, so a crash
                     # right after this checkpoint doesn't lose this segment's wall-clock time
                     # from cumulative_wall_clock_seconds on the next resume.
@@ -284,21 +329,43 @@ class SpaceInvaderAgent:
                     session_start = now
                     self.save(self.checkpoint_path, write_replay_memory=write_replay)
 
-                curr_state = new_state
-                frame_num += 1
-                if frame_num > self.max_train_frames + self.start_frame_num:
-                    break
+                curr_states = new_states
+                frame_num += self.num_envs
 
-            # print("Episode finished. Reward:", episode_reward)
-            episode_num += 1
-            if episode_csv_path:
+                # a sub-env's episode ends the tick its lives hit 0; log and reset its
+                # accumulator, independently of every other sub-env's episode boundary
+                flushed_this_tick[:] = False
+                finished_envs = np.nonzero(~alive)[0]
+                if len(finished_envs) > 0:
+                    epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
+                    elapsed = self.cumulative_wall_clock_seconds + (time.time() - session_start)
+                    for env_idx in finished_envs:
+                        episode_num += 1
+                        if episode_csv_path:
+                            self._append_csv_row(
+                                episode_csv_path,
+                                [frame_num, episode_num, episode_rewards[env_idx], epsilon, elapsed]
+                            )
+                        self.rewards.append(episode_rewards[env_idx])
+                        episode_rewards[env_idx] = 0
+                        flushed_this_tick[env_idx] = True
+
+            # Matches the pre-vectorization single-env loop, which always recorded
+            # episode_reward once the frame budget ran out, even mid-episode: flush any
+            # env's still-in-progress episode now, skipping envs already flushed above on
+            # this final tick to avoid double-recording them.
+            leftover_envs = np.nonzero(~flushed_this_tick)[0]
+            if len(leftover_envs) > 0:
                 epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
                 elapsed = self.cumulative_wall_clock_seconds + (time.time() - session_start)
-                self._append_csv_row(
-                    episode_csv_path,
-                    [frame_num, episode_num, episode_reward, epsilon, elapsed]
-                )
-            self.rewards.append(episode_reward)
+                for env_idx in leftover_envs:
+                    episode_num += 1
+                    if episode_csv_path:
+                        self._append_csv_row(
+                            episode_csv_path,
+                            [frame_num, episode_num, episode_rewards[env_idx], epsilon, elapsed]
+                        )
+                    self.rewards.append(episode_rewards[env_idx])
 
         self.cumulative_wall_clock_seconds += time.time() - session_start
 

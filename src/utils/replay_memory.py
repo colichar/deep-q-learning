@@ -176,6 +176,13 @@ class VectorizedReplayMemory:
             for sub_batch_size in sub_batch_sizes
         ]
 
+    @property
+    def count(self):
+        # Sub-buffers all receive exactly one add_frames() write per training tick, so
+        # they grow in lockstep - this aggregate tracks total frames across all envs,
+        # the same unit frame_num advances by per tick in the training loop.
+        return sum(buffer.count for buffer in self.buffers)
+
     @staticmethod
     def _split_batch_sizes(batch_size, num_envs):
         """Distributes batch_size as evenly as possible across num_envs sub-buffers."""
@@ -204,3 +211,13 @@ class VectorizedReplayMemory:
         """
         sub_batches = [buffer.get_batch() for buffer in self.buffers]
         return tuple(cat(tensors, dim=0) for tensors in zip(*sub_batches))
+
+    def save_replay_memory(self, path):
+        """Saves each sub-buffer under its own `path/env_<i>/` subfolder."""
+        for i, buffer in enumerate(self.buffers):
+            buffer.save_replay_memory(os.path.join(path, f"env_{i}"))
+
+    def load_replay_memory(self, path):
+        """Restores each sub-buffer from its own `path/env_<i>/` subfolder."""
+        for i, buffer in enumerate(self.buffers):
+            buffer.load_replay_memory(os.path.join(path, f"env_{i}"))
