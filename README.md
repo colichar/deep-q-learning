@@ -47,6 +47,18 @@ uv run python scripts/train.py --help
 ```
 to see this same list from the CLI.
 
+## Play against the DQN
+
+Play Space Invaders side-by-side against the trained DQN agent.
+
+```bash
+uv run python scripts/play.py
+```
+
+The trained model is downloaded automatically from Hugging Face on first launch and cached locally.
+
+**Controls:** ← / → to move, Space to fire, R to restart, Esc to quit.
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--learning-rate` | `0.00025` | Learning rate for the main model's optimizer. |

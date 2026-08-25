@@ -1,15 +1,14 @@
 from src.utils.preprocessor import Preprocessor
 from src.utils.replay_memory import VectorizedReplayMemory
 from src.models.cnn import CNNModelPY
+from src.utils.space_invaders import NoopResetEnv, make_space_invaders_env
 
-import gymnasium as gym
-import ale_py
 from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
 from torch import where, no_grad, tensor, device as torch_device
 from torch.cuda import is_available
 from torchvision.transforms import Resize
 import numpy as np
-from numpy import mean, random, uint8, array, zeros as np_zeros, sign
+from numpy import mean, random, array, zeros as np_zeros, sign
 import matplotlib.pyplot as plt
 from PIL import Image
 import csv
@@ -17,38 +16,6 @@ import glob
 import os
 import pickle
 import time
-
-gym.register_envs(ale_py)
-
-
-class NoopResetEnv(gym.Wrapper):
-    """
-    Performs a randomized number of no-op steps inside reset() itself, so each 
-    episode starts from a different point in the game's otherwise-fixed opening sequence.
-    Living in reset() means gymnasium's NEXT_STEP auto-reset re-randomizes every episode's
-    start during training, not just the first.
-    """
-
-    def __init__(self, env, noop_action=0):
-        super().__init__(env)
-        self.noop_action = noop_action
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        n_groups = random.randint(4, 31)
-        for _ in range(n_groups):
-            obs, _, terminated, truncated, info = self.env.step(self.noop_action)
-            if terminated or truncated:
-                obs, info = self.env.reset(**kwargs)
-        return obs, info
-
-
-def _make_space_invaders_env():
-    # Module-level (not a lambda/closure) so AsyncVectorEnv's subprocess workers can
-    # pickle it under any multiprocessing start method, not just fork.
-    env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array")
-    return NoopResetEnv(env)
-
 
 class ExplorationVsExploitation:
     """
@@ -141,9 +108,7 @@ class SpaceInvaderAgent:
     ):
         # Kept as a standalone single env for evaluate()'s gif-recording eval loop,
         # independent of the vectorized training envs below.
-        self.my_env = NoopResetEnv(gym.make(
-            "ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array"
-        ))
+        self.my_env = make_space_invaders_env()
 
         self.num_envs = num_envs
         self.vec_env = self._make_vec_env(num_envs)
@@ -197,7 +162,7 @@ class SpaceInvaderAgent:
         """SyncVectorEnv at num_envs == 1 keeps single-env training behaviorally identical
         (no subprocess indirection); AsyncVectorEnv (subprocess-based) is used for N > 1
         so N sub-envs actually step in parallel."""
-        env_fns = [_make_space_invaders_env for _ in range(num_envs)]
+        env_fns = [make_space_invaders_env for _ in range(num_envs)]
         return SyncVectorEnv(env_fns) if num_envs == 1 else AsyncVectorEnv(env_fns)
 
     @staticmethod

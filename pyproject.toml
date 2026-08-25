@@ -10,6 +10,8 @@ dependencies = [
     "ale-py",
     "autorom[accept-rom-license]",
     "matplotlib>=3.11.1",
+    "pygame>=2.6.0",
+    "huggingface_hub>=0.30.0",
 ]
 
 # torch/torchvision are picked per-machine via an extra, since CPU-only machines and

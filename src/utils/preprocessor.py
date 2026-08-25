@@ -4,6 +4,41 @@ from torch import cat, tensor, stack
 from numpy import maximum, zeros
 
 
+class FrameSkipStepper:
+    """Advance one existing action-repeat group a raw ALE frame at a time.
+
+    This is the step-wise counterpart to :meth:`Preprocessor.step_with_skip`.
+    It lets a renderer show every emulator frame while retaining the training
+    pipeline's four-frame action hold and last-two-frame max pooling.
+    """
+
+    def __init__(self, env, action, frame_skip):
+        self.env = env
+        self.action = action
+        self.frame_skip = frame_skip
+        self.total_reward = 0.0
+        self.frames = []
+        self.terminated = False
+        self.truncated = False
+        self.info = {}
+
+    @property
+    def complete(self):
+        return len(self.frames) >= self.frame_skip or self.terminated or self.truncated
+
+    def advance(self):
+        """Take one raw frame and return its ALE observation and transition data."""
+        obs, reward, self.terminated, self.truncated, self.info = self.env.step(self.action)
+        self.total_reward += reward
+        self.frames.append(obs)
+        return obs, reward, self.terminated, self.truncated, self.info
+
+    def result(self):
+        """Return the same aggregate result as ``step_with_skip`` after completion."""
+        frames = self.frames if len(self.frames) > 1 else self.frames * 2
+        return maximum(frames[-2], frames[-1]), self.total_reward, self.terminated, self.truncated, self.info
+
+
 class Preprocessor:
     """
     Takes care of frame-skipping and preprocessing frames of the game for the models.
@@ -25,26 +60,10 @@ class Preprocessor:
         """
         skip = self.frame_skip if skip is None else skip
 
-        total_reward = 0.0
-        frames = []
-        terminated = truncated = False
-        info = {}
-
-        for _ in range(skip):
-            obs, reward, terminated, truncated, info = env.step(action)
-            total_reward += reward
-            frames.append(obs)
-            if terminated or truncated:
-                break
-
-        if len(frames) == 1:
-            # episode ended on the very first frame of this group - nothing to
-            # pair, so max() against itself is a no-op.
-            frames.append(frames[0])
-
-        maxed_obs = maximum(frames[-2], frames[-1])
-
-        return maxed_obs, total_reward, terminated, truncated, info
+        stepper = FrameSkipStepper(env, action, skip)
+        while not stepper.complete:
+            stepper.advance()
+        return stepper.result()
 
     def step_with_skip_vec(self, vec_env, actions, skip=None):
         """
