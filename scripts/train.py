@@ -102,6 +102,7 @@ def main():
 
     agent.train()
     agent.save(args.save_path)
+    agent.close()
 
 
 if __name__ == "__main__":

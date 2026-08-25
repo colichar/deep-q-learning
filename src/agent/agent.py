@@ -21,10 +21,34 @@ import time
 gym.register_envs(ale_py)
 
 
+class NoopResetEnv(gym.Wrapper):
+    """
+    OpenAI-Baselines-style no-op reset: performs a randomized number of no-op steps
+    inside reset() itself, so each episode starts from a different point in the game's
+    otherwise-fixed opening sequence. Living in reset() (rather than a one-off warmup at
+    train() start, as the pre-#29-review code did) means gymnasium's NEXT_STEP auto-reset
+    re-randomizes every episode's start during training, not just the first.
+    """
+
+    def __init__(self, env, noop_action=0):
+        super().__init__(env)
+        self.noop_action = noop_action
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        n_groups = random.randint(4, 31)
+        for _ in range(n_groups):
+            obs, _, terminated, truncated, info = self.env.step(self.noop_action)
+            if terminated or truncated:
+                obs, info = self.env.reset(**kwargs)
+        return obs, info
+
+
 def _make_space_invaders_env():
     # Module-level (not a lambda/closure) so AsyncVectorEnv's subprocess workers can
     # pickle it under any multiprocessing start method, not just fork.
-    return gym.make("ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array")
+    env = gym.make("ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array")
+    return NoopResetEnv(env)
 
 
 class ExplorationVsExploitation:
@@ -118,9 +142,9 @@ class SpaceInvaderAgent:
     ):
         # Kept as a standalone single env for evaluate()'s gif-recording eval loop,
         # independent of the vectorized training envs below.
-        self.my_env = gym.make(
+        self.my_env = NoopResetEnv(gym.make(
             "ALE/SpaceInvaders-v5", frameskip=1, repeat_action_probability=0.0, render_mode="rgb_array"
-        )
+        ))
 
         self.num_envs = num_envs
         self.vec_env = self._make_vec_env(num_envs)
@@ -260,6 +284,11 @@ class SpaceInvaderAgent:
             # mid-episode) doesn't double-record an env that happened to finish on the very
             # last tick processed.
             flushed_this_tick = np.zeros(self.num_envs, dtype=bool)
+            # Holds the *previous* tick's ~alive mask: an env that ended its episode last
+            # tick got auto-reset by the vector env, so this tick's raw obs for it belongs
+            # to a new episode. Without this, new_state_vec's shift-append would splice
+            # that new episode's frame onto the dying episode's tail in the acting state.
+            just_reset = np.zeros(self.num_envs, dtype=bool)
 
             while frame_num <= budget_end:
                 # take actions, one per sub-env
@@ -280,6 +309,12 @@ class SpaceInvaderAgent:
 
                 # create new sequences with the new frames
                 new_states, new_frames = self.Preprocessor.new_state_vec(new_raw_obs, curr_states)
+
+                # envs whose episode ended last tick got auto-reset; seed their acting
+                # state stack from scratch instead of shift-appending onto the old episode
+                if just_reset.any():
+                    reset_idx = np.nonzero(just_reset)[0]
+                    new_states[reset_idx] = new_frames[reset_idx].unsqueeze(1).repeat(1, 4, 1, 1)
 
                 # store new frames, one per sub-env
                 self.ReplayMemory.add_frames(
@@ -350,6 +385,8 @@ class SpaceInvaderAgent:
                         episode_rewards[env_idx] = 0
                         flushed_this_tick[env_idx] = True
 
+                just_reset = ~alive
+
             # Matches the pre-vectorization single-env loop, which always recorded
             # episode_reward once the frame budget ran out, even mid-episode: flush any
             # env's still-in-progress episode now, skipping envs already flushed above on
@@ -368,6 +405,12 @@ class SpaceInvaderAgent:
                     self.rewards.append(episode_rewards[env_idx])
 
         self.cumulative_wall_clock_seconds += time.time() - session_start
+
+    def close(self):
+        """Closes the vectorized training env and the standalone eval env, so
+        AsyncVectorEnv's subprocess workers (num_envs > 1) don't leak."""
+        self.vec_env.close()
+        self.my_env.close()
 
     @staticmethod
     def _guard_against_unrelated_run(path):

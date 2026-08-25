@@ -35,9 +35,7 @@ class ImageScriptedEnv(gym.Env):
         return self._obs(), 0.0, False, False, {"lives": 3}
 
 
-def test_initialize_state_vec_matches_single_env_path_at_n1(monkeypatch):
-    monkeypatch.setattr("src.utils.preprocessor.randint", lambda lo, hi: 7)
-
+def test_initialize_state_vec_matches_single_env_path_at_n1():
     preprocessor = Preprocessor()
     single_env = ImageScriptedEnv(base=10)
     vec_env = SyncVectorEnv([lambda: ImageScriptedEnv(base=10)])
@@ -50,7 +48,7 @@ def test_initialize_state_vec_matches_single_env_path_at_n1(monkeypatch):
     assert vec_info["lives"].tolist() == [single_info["lives"]]
 
 
-def test_initialize_state_vec_shape_for_multiple_envs():
+def test_initialize_state_vec_is_4_copies_of_the_first_post_reset_frame():
     preprocessor = Preprocessor()
     vec_env = SyncVectorEnv([lambda base=b: ImageScriptedEnv(base=base) for b in (10, 50, 90)])
 
@@ -59,11 +57,13 @@ def test_initialize_state_vec_shape_for_multiple_envs():
     assert states.shape == (3, 4, 84, 84)
     assert states.dtype == torch.uint8
     assert info["lives"].tolist() == [3, 3, 3]
+    for env_i in range(3):
+        assert torch.equal(states[env_i, 0], states[env_i, 1])
+        assert torch.equal(states[env_i, 0], states[env_i, 2])
+        assert torch.equal(states[env_i, 0], states[env_i, 3])
 
 
-def test_new_state_vec_matches_single_env_path_at_n1(monkeypatch):
-    monkeypatch.setattr("src.utils.preprocessor.randint", lambda lo, hi: 4)
-
+def test_new_state_vec_matches_single_env_path_at_n1():
     preprocessor = Preprocessor()
     single_env = ImageScriptedEnv(base=10)
     vec_env = SyncVectorEnv([lambda: ImageScriptedEnv(base=10)])

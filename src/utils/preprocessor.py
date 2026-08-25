@@ -1,8 +1,7 @@
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchvision.transforms.v2 import Resize
 from torch import cat, tensor, stack
-from numpy import maximum, zeros, int64
-from numpy.random import randint
+from numpy import maximum, zeros
 
 
 class Preprocessor:
@@ -117,51 +116,28 @@ class Preprocessor:
 
     def initialize_state(self, env):
         """
-        Initializes the first state of an episode with the first 4 flicker-
-        reduced frames.
-
-        Takes a randomized number of no-op frame-skip groups first, so each
-        episode starts from a different point in the game's otherwise-fixed
-        opening sequence instead of always the same frame.
+        Initializes the first state of an episode as 4 copies of the first post-reset
+        frame. The randomized no-op warmup that makes each episode start from a
+        different point in the game's otherwise-fixed opening sequence now lives inside
+        `env.reset()` itself (see `NoopResetEnv` in `agent.py`), so by the time it
+        returns here there's only a single fresh frame to seed the stack with - same
+        single-frame-stack-seed simplification used for a mid-training episode reset
+        (`SpaceInvaderAgent.train`'s `just_reset` handling).
         """
-        env.reset()
-        n_groups = randint(4, 31)
+        obs, info = env.reset()
+        processed_fr = self.preprocess_frame(obs)
 
-        maxed_frames = []
-        info = {}
-        for _ in range(n_groups):
-            maxed_obs, _, _, _, info = self.step_with_skip(env, action=0)
-            maxed_frames.append(maxed_obs)
-
-        maxed_frames = maxed_frames[-4:]
-        processed_frames = [self.preprocess_frame(frame) for frame in maxed_frames]
-
-        return cat(processed_frames, axis=0), info
+        return cat([processed_fr] * 4, axis=0), info
 
     def initialize_state_vec(self, vec_env):
         """
         Vectorized `initialize_state`: builds the first stacked state (num_envs, 4, H, W)
-        for every sub-env at once, from one shared randomized no-op warmup (all sub-envs
-        take the same number of no-op groups, rather than staggering per-env - simpler,
-        and still randomizes the start point run to run).
+        for every sub-env at once, as 4 copies of each sub-env's first post-reset frame.
         """
-        vec_env.reset()
-        n_groups = randint(4, 31)
-        noop_actions = zeros(vec_env.num_envs, dtype=int64)
+        obs, info = vec_env.reset()
+        processed = stack([self.preprocess_frame(frame) for frame in obs])
 
-        maxed_frames = []
-        info = {}
-        for _ in range(n_groups):
-            maxed_obs, _, _, _, info = self.step_with_skip_vec(vec_env, noop_actions)
-            maxed_frames.append(maxed_obs)
-
-        maxed_frames = maxed_frames[-4:]
-        stacked_states = [
-            cat([self.preprocess_frame(frame[env_i]) for frame in maxed_frames], axis=0)
-            for env_i in range(vec_env.num_envs)
-        ]
-
-        return stack(stacked_states), info
+        return cat([processed] * 4, dim=1), info
 
     def crop_frame(self,
                    frame,
