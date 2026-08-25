@@ -33,7 +33,19 @@ uv run AutoROM --accept-license -y
 
 This downloads to `.venv/lib/python3.12/site-packages/ale_py/roms/` and only needs to be re-run if `.venv` is recreated.
 
-## Start Training
+## Play against the DQN
+
+Play Space Invaders side-by-side against the trained DQN agent.
+
+```bash
+uv run python scripts/play.py
+```
+
+The trained model is downloaded automatically from Hugging Face on first launch and cached locally.
+
+**Controls:** ← / → to move, Space to fire, R to restart, Esc to quit.
+
+## Train your own Agent
 
 `scripts/train.py` is the entry point for starting a training run:
 
@@ -46,18 +58,6 @@ The defaults already match the [DeepMinds (2015)](https://www.nature.com/article
 uv run python scripts/train.py --help
 ```
 to see this same list from the CLI.
-
-## Play against the DQN
-
-Play Space Invaders side-by-side against the trained DQN agent.
-
-```bash
-uv run python scripts/play.py
-```
-
-The trained model is downloaded automatically from Hugging Face on first launch and cached locally.
-
-**Controls:** ← / → to move, Space to fire, R to restart, Esc to quit.
 
 | Flag | Default | Description |
 | --- | --- | --- |
