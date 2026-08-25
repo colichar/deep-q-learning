@@ -23,11 +23,10 @@ gym.register_envs(ale_py)
 
 class NoopResetEnv(gym.Wrapper):
     """
-    OpenAI-Baselines-style no-op reset: performs a randomized number of no-op steps
-    inside reset() itself, so each episode starts from a different point in the game's
-    otherwise-fixed opening sequence. Living in reset() (rather than a one-off warmup at
-    train() start, as the pre-#29-review code did) means gymnasium's NEXT_STEP auto-reset
-    re-randomizes every episode's start during training, not just the first.
+    Performs a randomized number of no-op steps inside reset() itself, so each 
+    episode starts from a different point in the game's otherwise-fixed opening sequence.
+    Living in reset() means gymnasium's NEXT_STEP auto-reset re-randomizes every episode's
+    start during training, not just the first.
     """
 
     def __init__(self, env, noop_action=0):
@@ -270,24 +269,16 @@ class SpaceInvaderAgent:
         frame_num = self.start_frame_num + 1
         budget_end = self.max_train_frames + self.start_frame_num
 
-        # Guarded by the budget check up front, not inside the loop: a zero-frame budget
-        # (e.g. a resumed run with nothing left to do) must not touch self.Preprocessor /
-        # self.vec_env at all, since a bare-constructed agent (see test_agent_metrics_guard)
-        # may not have them set.
         if frame_num <= budget_end:
             curr_states, info = self.Preprocessor.initialize_state_vec(self.vec_env)
             prev_lives = array(info["lives"])
             episode_rewards = np_zeros(self.num_envs)
             # Tracks whether each env's running episode_rewards was just flushed this tick,
-            # so the leftover-flush below (mirroring the single-env loop's original behavior
-            # of always recording whatever's accumulated once the frame budget runs out, even
-            # mid-episode) doesn't double-record an env that happened to finish on the very
-            # last tick processed.
+            # so the leftover-flush below doesn't double-record an env that happened to finish
+            # on the very last tick processed.
             flushed_this_tick = np.zeros(self.num_envs, dtype=bool)
-            # Holds the *previous* tick's ~alive mask: an env that ended its episode last
-            # tick got auto-reset by the vector env, so this tick's raw obs for it belongs
-            # to a new episode. Without this, new_state_vec's shift-append would splice
-            # that new episode's frame onto the dying episode's tail in the acting state.
+            # Holds the *previous* tick's ~alive mask: used to stop mixing frames from
+            # two episodes in the same acting state when an env that ended its episode last
             just_reset = np.zeros(self.num_envs, dtype=bool)
 
             while frame_num <= budget_end:
@@ -310,8 +301,7 @@ class SpaceInvaderAgent:
                 # create new sequences with the new frames
                 new_states, new_frames = self.Preprocessor.new_state_vec(new_raw_obs, curr_states)
 
-                # envs whose episode ended last tick got auto-reset; seed their acting
-                # state stack from scratch instead of shift-appending onto the old episode
+                # envs whose episode ended, flush frames from previous episode
                 if just_reset.any():
                     reset_idx = np.nonzero(just_reset)[0]
                     new_states[reset_idx] = new_frames[reset_idx].unsqueeze(1).repeat(1, 4, 1, 1)

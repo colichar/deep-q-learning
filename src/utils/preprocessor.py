@@ -63,9 +63,7 @@ class Preprocessor:
         `info` is the vector env's info from the last sub-step taken, with `lives`
         overwritten to be frozen the same way the frames are: for a sub-env that ended
         mid-group, `info["lives"]` reflects the episode that just ended, not the reset
-        frames of the next one that gymnasium hands back for the rest of the group
-        (`SpaceInvaderAgent.train` uses this, matching the single-env path's `info["lives"]`
-        life-loss detection, exactly as issue #29 needed).
+        frames of the next one that gymnasium hands back for the rest of the group.
         """
         skip = self.frame_skip if skip is None else skip
 
@@ -117,12 +115,7 @@ class Preprocessor:
     def initialize_state(self, env):
         """
         Initializes the first state of an episode as 4 copies of the first post-reset
-        frame. The randomized no-op warmup that makes each episode start from a
-        different point in the game's otherwise-fixed opening sequence now lives inside
-        `env.reset()` itself (see `NoopResetEnv` in `agent.py`), so by the time it
-        returns here there's only a single fresh frame to seed the stack with - same
-        single-frame-stack-seed simplification used for a mid-training episode reset
-        (`SpaceInvaderAgent.train`'s `just_reset` handling).
+        frame.
         """
         obs, info = env.reset()
         processed_fr = self.preprocess_frame(obs)
