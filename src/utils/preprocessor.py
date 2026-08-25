@@ -1,8 +1,7 @@
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchvision.transforms.v2 import Resize
-from torch import cat, tensor
+from torch import cat, tensor, stack
 from numpy import maximum, zeros
-from numpy.random import randint
 
 
 class Preprocessor:
@@ -61,21 +60,12 @@ class Preprocessor:
         then real steps of the *next* episode), and maxing a terminal frame against
         one of those would silently splice two episodes together.
 
-        `info` is the vector env's info from the last sub-step taken, so its entries
-        for a sub-env that ended mid-group already describe that sub-env's new
-        episode - the returned masks, not `info`, mark the episode boundary.
-
-        Two things are deliberately left for issue #29, which wires this into the
-        training loop. First, `SpaceInvaderAgent.train` currently derives the replay
-        memory's `terminal` flag purely from `info["lives"]` and never looks at
-        `terminated`/`truncated`; porting that pattern as-is would read the *next*
-        episode's `info` for a sub-env that ended mid-group, mis-tag terminal frames and
-        let `ReplayMemory` sample across an episode boundary. Second, under `NEXT_STEP`
-        auto-reset a new episode's first `skip - k` frames are consumed inside the group
-        where the previous episode ended, so this method never returns a fresh episode's
-        reset frame the way `initialize_state` does for the single-env path.
-        TODO(#29): remove this note once both points above are handled in the vectorized
-        training loop.
+        `info` is the vector env's info from the last sub-step taken, with `lives`
+        overwritten to be frozen the same way the frames are: for a sub-env that ended
+        mid-group, `info["lives"]` reflects the episode that just ended, not the reset
+        frames of the next one that gymnasium hands back for the rest of the group
+        (`SpaceInvaderAgent.train` uses this, matching the single-env path's `info["lives"]`
+        life-loss detection, exactly as issue #29 needed).
         """
         skip = self.frame_skip if skip is None else skip
 
@@ -86,6 +76,7 @@ class Preprocessor:
         done = zeros(num_envs, dtype=bool)
 
         prev_frames = last_frames = None
+        frozen_lives = None
         info = {}
 
         for _ in range(skip):
@@ -101,6 +92,12 @@ class Preprocessor:
                 prev_frames[live] = last_frames[live]
                 last_frames[live] = obs[live]
 
+            if "lives" in info:
+                if frozen_lives is None:
+                    frozen_lives = info["lives"].copy()
+                else:
+                    frozen_lives[live] = info["lives"][live]
+
             total_rewards[live] += rewards[live]
             terminated |= step_terminated & live
             truncated |= step_truncated & live
@@ -111,30 +108,36 @@ class Preprocessor:
 
         maxed_obs = maximum(prev_frames, last_frames)
 
+        if frozen_lives is not None:
+            info = dict(info)
+            info["lives"] = frozen_lives
+
         return maxed_obs, total_rewards, terminated, truncated, info
 
     def initialize_state(self, env):
         """
-        Initializes the first state of an episode with the first 4 flicker-
-        reduced frames.
-
-        Takes a randomized number of no-op frame-skip groups first, so each
-        episode starts from a different point in the game's otherwise-fixed
-        opening sequence instead of always the same frame.
+        Initializes the first state of an episode as 4 copies of the first post-reset
+        frame. The randomized no-op warmup that makes each episode start from a
+        different point in the game's otherwise-fixed opening sequence now lives inside
+        `env.reset()` itself (see `NoopResetEnv` in `agent.py`), so by the time it
+        returns here there's only a single fresh frame to seed the stack with - same
+        single-frame-stack-seed simplification used for a mid-training episode reset
+        (`SpaceInvaderAgent.train`'s `just_reset` handling).
         """
-        env.reset()
-        n_groups = randint(4, 31)
+        obs, info = env.reset()
+        processed_fr = self.preprocess_frame(obs)
 
-        maxed_frames = []
-        info = {}
-        for _ in range(n_groups):
-            maxed_obs, _, _, _, info = self.step_with_skip(env, action=0)
-            maxed_frames.append(maxed_obs)
+        return cat([processed_fr] * 4, axis=0), info
 
-        maxed_frames = maxed_frames[-4:]
-        processed_frames = [self.preprocess_frame(frame) for frame in maxed_frames]
+    def initialize_state_vec(self, vec_env):
+        """
+        Vectorized `initialize_state`: builds the first stacked state (num_envs, 4, H, W)
+        for every sub-env at once, as 4 copies of each sub-env's first post-reset frame.
+        """
+        obs, info = vec_env.reset()
+        processed = stack([self.preprocess_frame(frame) for frame in obs])
 
-        return cat(processed_frames, axis=0), info
+        return cat([processed] * 4, dim=1), info
 
     def crop_frame(self,
                    frame,
@@ -170,3 +173,14 @@ class Preprocessor:
         new_stacked_state = cat([old_state[1:, ::, ::], processed_fr], axis=0)
 
         return new_stacked_state, processed_fr.squeeze(0)
+
+    def new_state_vec(self, new_raw_obs, old_states):
+        """
+        Vectorized `new_state`: `new_raw_obs` is (num_envs, H, W, C), `old_states` is
+        (num_envs, 4, H, W). Also returns the new frames on their own (num_envs, H, W),
+        so they can be stored directly in the replay memory.
+        """
+        processed = stack([self.preprocess_frame(frame) for frame in new_raw_obs])
+        new_stacked_states = cat([old_states[:, 1:], processed], dim=1)
+
+        return new_stacked_states, processed.squeeze(1)

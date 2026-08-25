@@ -105,8 +105,9 @@ def test_agent_resumes_from_saved_checkpoint(tmp_path):
     resumed = SpaceInvaderAgent(**AGENT_KWARGS)
     resumed.load(str(tmp_path))
 
-    assert np.array_equal(resumed.ReplayMemory.frames, agent.ReplayMemory.frames)
-    assert resumed.ReplayMemory.idx == agent.ReplayMemory.idx
+    # num_envs=1 (the default) means a single sub-buffer, at index 0.
+    assert np.array_equal(resumed.ReplayMemory.buffers[0].frames, agent.ReplayMemory.buffers[0].frames)
+    assert resumed.ReplayMemory.buffers[0].idx == agent.ReplayMemory.buffers[0].idx
     assert resumed.ReplayMemory.count == agent.ReplayMemory.count
     assert resumed.start_frame_num == last_frame_before
 
