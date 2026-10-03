@@ -6,6 +6,8 @@ The agent was trained on a local setup with a RTX-4070 Ti Super. It was
 trained with a single gymnasium environment for 50M frames (~12.5 hours) and
 in it's last 1M frames completed ~500 episode with an average reward of ~1970 points.
 
+The model is available on [Hugging Face](https://huggingface.co/greensmuzi/space-invaders-dqn)
+
 <p align="center">
   <img src="./images/result-50M-frames.gif" alt="dql"/>
 </p>
