@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import csv
 import glob
+import json
 import os
 import pickle
 import time
@@ -488,13 +489,17 @@ class SpaceInvaderAgent:
              write_replay_memory=True,
              ):
         """
-        Saves the agents replay memory, training history and model weights to disk.
+        Saves checkpoint metadata, replay memory, training history and model weights to disk.
 
         Parameters:
         - path (str): The path where the data should be saved.
         - write_replay_memory (bool): Whether to save the replay memory buffer, which is the
           expensive part of a checkpoint. Set to False to skip it (see replay_checkpoint_freq).
         """
+
+        os.makedirs(path, exist_ok=True)
+        with open(path + '/checkpoint_metadata.json', 'w') as file:
+            json.dump({"num_envs": self.num_envs}, file)
 
         if write_replay_memory:
             print('Saving replay memory to disk...')
@@ -544,6 +549,25 @@ class SpaceInvaderAgent:
         Parameters:
         - path (str): The path where the data should be saved.
         """
+
+        metadata_path = path + '/checkpoint_metadata.json'
+        try:
+            with open(metadata_path) as file:
+                saved_num_envs = json.load(file).get("num_envs")
+        except FileNotFoundError:
+            saved_num_envs = None
+
+        if saved_num_envs is None:
+            raise ValueError(
+                f"Checkpoint '{path}' has no num_envs metadata. Checkpoints without this metadata "
+                "are unsupported; start a new run without --resume-from using a new --save-path."
+            )
+        if saved_num_envs != self.num_envs:
+            raise ValueError(
+                f"Checkpoint num_envs ({saved_num_envs}) does not match requested num_envs ({self.num_envs}). "
+                f"Resume with --num-envs {saved_num_envs}, or start a new run without --resume-from "
+                "using a new --save-path."
+            )
 
         print('Loading replay memory from disk...')
         try:
