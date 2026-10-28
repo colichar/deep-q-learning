@@ -21,6 +21,9 @@ def parse_args():
 
     parser.add_argument("--learning-rate", type=float, default=0.00025,
                          help="Learning rate for the main model's optimizer.")
+    parser.add_argument("--double-dqn", action="store_true",
+                         help="Use Double DQN: select next actions with the main network and evaluate "
+                              "them with the target network. Pass again when resuming Double DQN training.")
     parser.add_argument("--optimizer", type=str, default="rmsprop", choices=["adam", "rmsprop"],
                          help="Optimizer for the main model. 'rmsprop' uses the DeepMind Nature paper's "
                               "centered RMSProp (gradient momentum / squared gradient momentum 0.95, min "
@@ -93,9 +96,11 @@ def main():
         replay_checkpoint_freq=args.replay_checkpoint_freq,
         optimizer=args.optimizer,
         num_envs=args.num_envs,
+        double_dqn=args.double_dqn,
     )
 
     print(f"Using device: {agent.device}")
+    print(f"Using algorithm: {'Double DQN' if args.double_dqn else 'DQN'}")
 
     if args.resume_from:
         agent.load(args.resume_from)

@@ -105,6 +105,7 @@ class SpaceInvaderAgent:
             replay_checkpoint_freq=None,
             optimizer="adam",
             num_envs=1,
+            double_dqn=False,
     ):
         # Kept as a standalone single env for evaluate()'s gif-recording eval loop,
         # independent of the vectorized training envs below.
@@ -124,6 +125,7 @@ class SpaceInvaderAgent:
         self.average_loss_freq = average_loss_freq
         self.log_freq = log_freq
         self.discount = discount
+        self.double_dqn = double_dqn
         self.metrics_dir = metrics_dir
         self.checkpoint_freq = checkpoint_freq
         self.replay_checkpoint_freq = replay_checkpoint_freq if replay_checkpoint_freq is not None else checkpoint_freq
@@ -194,7 +196,13 @@ class SpaceInvaderAgent:
 
         # Calculate Q values for non-terminal transitions
         with no_grad():
-            target_pred = self.TargetModel.best_reward(new_states)
+            if self.double_dqn:
+                next_actions = self.MainModel.best_action(new_states)
+                target_pred = self.TargetModel(new_states).gather(
+                    1, next_actions.unsqueeze(1)
+                ).squeeze(1)
+            else:
+                target_pred = self.TargetModel.best_reward(new_states)
 
         target_q = rewards + self.discount * target_pred
 

@@ -22,12 +22,19 @@ AGENT_KWARGS = dict(
 )
 
 
-def test_training_runs_end_to_end():
-    agent = SpaceInvaderAgent(**AGENT_KWARGS)
-    agent.train()
+@pytest.mark.parametrize("double_dqn", [False, True])
+def test_training_runs_end_to_end(double_dqn):
+    algorithm_kwargs = {"double_dqn": True} if double_dqn else {}
+    agent = SpaceInvaderAgent(**AGENT_KWARGS, **algorithm_kwargs)
+    try:
+        assert agent.double_dqn is double_dqn
+        agent.train()
 
-    assert len(agent.averaged_losses) > 0
-    assert len(agent.rewards) > 0
+        assert len(agent.averaged_losses) > 0
+        assert np.isfinite(agent.averaged_losses).all()
+        assert len(agent.rewards) > 0
+    finally:
+        agent.close()
 
 
 def test_training_writes_metrics_csvs_incrementally(tmp_path):
@@ -92,27 +99,36 @@ def test_train_gates_updates_on_replay_memory_content_not_frame_num():
     assert agent.averaged_losses == []
 
 
-def test_agent_resumes_from_saved_checkpoint(tmp_path):
-    agent = SpaceInvaderAgent(**AGENT_KWARGS)
-    agent.train()
+@pytest.mark.parametrize("double_dqn", [False, True])
+def test_agent_resumes_from_saved_checkpoint(tmp_path, double_dqn):
+    agent = SpaceInvaderAgent(**AGENT_KWARGS, double_dqn=double_dqn)
+    try:
+        agent.train()
 
-    losses_before = len(agent.averaged_losses)
-    rewards_before = len(agent.rewards)
-    last_frame_before = agent.frame_nums[-1]
+        losses_before = len(agent.averaged_losses)
+        rewards_before = len(agent.rewards)
+        last_frame_before = agent.frame_nums[-1]
 
-    agent.save(str(tmp_path))
+        agent.save(str(tmp_path))
 
-    resumed = SpaceInvaderAgent(**AGENT_KWARGS)
-    resumed.load(str(tmp_path))
+        resumed = SpaceInvaderAgent(**AGENT_KWARGS, double_dqn=double_dqn)
+        try:
+            resumed.load(str(tmp_path))
 
-    # num_envs=1 (the default) means a single sub-buffer, at index 0.
-    assert np.array_equal(resumed.ReplayMemory.buffers[0].frames, agent.ReplayMemory.buffers[0].frames)
-    assert resumed.ReplayMemory.buffers[0].idx == agent.ReplayMemory.buffers[0].idx
-    assert resumed.ReplayMemory.count == agent.ReplayMemory.count
-    assert resumed.start_frame_num == last_frame_before
+            assert resumed.double_dqn is double_dqn
+            # num_envs=1 (the default) means a single sub-buffer, at index 0.
+            assert np.array_equal(resumed.ReplayMemory.buffers[0].frames, agent.ReplayMemory.buffers[0].frames)
+            assert resumed.ReplayMemory.buffers[0].idx == agent.ReplayMemory.buffers[0].idx
+            assert resumed.ReplayMemory.count == agent.ReplayMemory.count
+            assert resumed.start_frame_num == last_frame_before
 
-    # Continuing training should run without error and append further history.
-    resumed.train()
+            resumed.train()
 
-    assert len(resumed.averaged_losses) > losses_before
-    assert len(resumed.rewards) > rewards_before
+            assert len(resumed.averaged_losses) > losses_before
+            assert np.isfinite(resumed.averaged_losses).all()
+            assert resumed.frame_nums[-1] > last_frame_before
+            assert len(resumed.rewards) > rewards_before
+        finally:
+            resumed.close()
+    finally:
+        agent.close()

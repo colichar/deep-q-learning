@@ -64,6 +64,7 @@ to see this same list from the CLI.
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--learning-rate` | `0.00025` | Learning rate for the main model's optimizer. |
+| `--double-dqn` | `False` | Enable Double DQN. Pass again when resuming Double DQN training. |
 | `--optimizer` | `rmsprop` | `adam` or `rmsprop`. `rmsprop` uses the paper's *centered* RMSProp (`alpha=0.95`, `eps=0.01`, `centered=True`). Must match the checkpoint's optimizer when using `--resume-from` — Adam's and RMSProp's saved optimizer state aren't interchangeable. |
 | `--memory-size` | `1000000` | Number of frames the replay memory ring buffer holds. Must match the checkpoint's size when using `--resume-from` — validated against the saved buffer's shape and the load fails otherwise. |
 | `--memory-warmup` | `50000` | Number of frames to collect before training/logging starts. |
@@ -80,6 +81,23 @@ to see this same list from the CLI.
 | `--metrics-dir` | `scripts/output/metrics` | Directory to write `episodes.csv`/`losses.csv` to incrementally during training. |
 | `--checkpoint-freq` | `25000` | Save a checkpoint to `--save-path` every N frames during training. |
 | `--replay-checkpoint-freq` | `None` (defaults to `--checkpoint-freq`) | Save the replay memory buffer (the expensive part of a checkpoint) every N frames, independently of `--checkpoint-freq`. Must be a multiple of `--checkpoint-freq`. Set higher than `--checkpoint-freq` to checkpoint model/history often while writing the multi-GB replay buffer less often. |
+
+### Double DQN
+
+Enable Double DQN with:
+
+```bash
+uv run python scripts/train.py --double-dqn
+```
+
+In Python, use `SpaceInvaderAgent(double_dqn=True)`. Vanilla DQN is the default.
+DQN uses the target network's maximum next-state Q-value; Double DQN selects the
+next action with the main network and evaluates it with the target network. This
+adds one main-network forward pass per training update.
+
+The algorithm is selected by the constructor/CLI, not stored in checkpoints. Pass
+`--double-dqn` again with `--resume-from` to continue Double DQN training. Checkpoints
+can be loaded in either mode; switching modes changes subsequent training targets.
 
 ## Tests
 
