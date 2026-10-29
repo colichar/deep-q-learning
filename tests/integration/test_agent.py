@@ -5,6 +5,7 @@ or skip with `uv run pytest -m "not integration"`.
 """
 import numpy as np
 import pytest
+from gymnasium.vector import AsyncVectorEnv
 
 from src.agent.agent import SpaceInvaderAgent
 
@@ -35,6 +36,50 @@ def test_training_runs_end_to_end(double_dqn):
         assert len(agent.rewards) > 0
     finally:
         agent.close()
+
+
+def test_vectorized_training_checkpoint_resume(tmp_path):
+    agent = SpaceInvaderAgent(**AGENT_KWARGS, num_envs=2)
+    try:
+        assert isinstance(agent.vec_env, AsyncVectorEnv)
+        assert agent.vec_env.num_envs == 2
+        agent.train()
+
+        assert len(agent.averaged_losses) > 0
+        assert np.isfinite(agent.averaged_losses).all()
+        assert len(agent.ReplayMemory.buffers) == 2
+        assert all(buffer.count > 0 for buffer in agent.ReplayMemory.buffers)
+        agent.save(str(tmp_path))
+    finally:
+        agent.close()
+
+    resumed = SpaceInvaderAgent(**AGENT_KWARGS, num_envs=2)
+    try:
+        assert isinstance(resumed.vec_env, AsyncVectorEnv)
+        assert resumed.vec_env.num_envs == 2
+        resumed.load(str(tmp_path))
+
+        assert resumed.start_frame_num == agent.frame_nums[-1]
+        assert resumed.frame_nums == agent.frame_nums
+        assert resumed.averaged_losses == agent.averaged_losses
+        assert resumed.rewards == agent.rewards
+        assert len(resumed.ReplayMemory.buffers) == 2
+        for saved, loaded in zip(agent.ReplayMemory.buffers, resumed.ReplayMemory.buffers):
+            for name in ("frames", "actions", "rewards", "terminal"):
+                np.testing.assert_array_equal(getattr(loaded, name), getattr(saved, name))
+            assert loaded.idx == saved.idx
+            assert loaded.count == saved.count
+
+        resumed.train()
+
+        assert len(resumed.averaged_losses) > len(agent.averaged_losses)
+        assert np.isfinite(resumed.averaged_losses).all()
+        assert resumed.frame_nums[-1] > agent.frame_nums[-1]
+        assert len(resumed.rewards) > len(agent.rewards)
+        for saved, continued in zip(agent.ReplayMemory.buffers, resumed.ReplayMemory.buffers):
+            assert continued.count > saved.count
+    finally:
+        resumed.close()
 
 
 def test_training_writes_metrics_csvs_incrementally(tmp_path):
