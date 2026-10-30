@@ -588,6 +588,12 @@ class SpaceInvaderAgent:
         self.ReplayMemory.load_replay_memory(path)
 
     def load_model(self, path):
+        if not os.path.isfile(path + '/model.pth'):
+            raise ValueError(
+                f"Checkpoint '{path}' has no model.pth main-network/optimizer state. "
+                "Resume from a checkpoint that includes it, or start a new run "
+                "without --resume-from using a new --save-path."
+            )
         try:
             target_weights = load(path + '/target.pth', map_location=self.TargetModel.device)
         except FileNotFoundError as error:

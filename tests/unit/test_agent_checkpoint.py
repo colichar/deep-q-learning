@@ -86,16 +86,20 @@ def test_matching_num_envs_restores_checkpoint(tmp_path, num_envs, write_replay_
     )
 
 
-def test_missing_target_state_is_unsupported(tmp_path):
+@pytest.mark.parametrize("filename, state_name", [
+    ("model.pth", "main-network/optimizer"),
+    ("target.pth", "target-network"),
+])
+def test_missing_model_state_is_unsupported(tmp_path, filename, state_name):
     agent = _agent(1)
     _record_training(agent)
     agent.save(str(tmp_path))
-    (tmp_path / "model" / "target.pth").unlink()
+    (tmp_path / "model" / filename).unlink()
     resumed = _agent(1)
     resumed.MainModel.load_model = Mock()
     resumed.TargetModel.set_weights = Mock()
 
-    with pytest.raises(ValueError, match="no target.pth target-network state.*without --resume-from"):
+    with pytest.raises(ValueError, match=f"no {filename} {state_name} state.*without --resume-from"):
         resumed.load(str(tmp_path))
 
     resumed.MainModel.load_model.assert_not_called()
