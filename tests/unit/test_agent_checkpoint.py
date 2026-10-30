@@ -11,10 +11,10 @@ from src.models.cnn import CNNModelPY
 from src.utils.replay_memory import VectorizedReplayMemory
 
 
-def _agent(num_envs):
+def _agent(num_envs, optimizer="adam"):
     agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
     agent.num_envs = num_envs
-    agent.MainModel = CNNModelPY(n_actions=6, device=torch.device("cpu"))
+    agent.MainModel = CNNModelPY(n_actions=6, device=torch.device("cpu"), optimizer=optimizer)
     agent.TargetModel = CNNModelPY(n_actions=6, device=torch.device("cpu"))
     # Equal sub-buffer capacities reproduce the partial-load bug rather than a shape error.
     agent.ReplayMemory = VectorizedReplayMemory(num_envs, capacity=16 * num_envs, batch_size=4)
@@ -53,12 +53,22 @@ def test_save_records_num_envs_without_training_history(tmp_path, write_replay_m
 
 @pytest.mark.parametrize("num_envs", [1, 2])
 @pytest.mark.parametrize("write_replay_memory", [True, False])
-def test_matching_num_envs_restores_checkpoint(tmp_path, num_envs, write_replay_memory):
-    agent = _agent(num_envs)
+@pytest.mark.parametrize("optimizer", ["adam", "rmsprop"])
+def test_matching_num_envs_restores_checkpoint(tmp_path, num_envs, write_replay_memory, optimizer):
+    agent = _agent(num_envs, optimizer)
     _record_training(agent)
+    agent.TargetModel.set_weights(agent.MainModel.get_weights())
+    loss = agent.MainModel(torch.rand(2, 4, 84, 84)).square().mean()
+    loss.backward()
+    agent.MainModel.optimizer.step()
+    assert agent.MainModel.optimizer.state
+    assert any(
+        not torch.equal(weights, agent.TargetModel.state_dict()[name])
+        for name, weights in agent.MainModel.state_dict().items()
+    )
     agent.save(str(tmp_path), write_replay_memory=write_replay_memory)
 
-    resumed = _agent(num_envs)
+    resumed = _agent(num_envs, optimizer)
     resumed.load(str(tmp_path))
 
     assert resumed.start_frame_num == 100
@@ -69,9 +79,31 @@ def test_matching_num_envs_restores_checkpoint(tmp_path, num_envs, write_replay_
         for saved, loaded in zip(agent.ReplayMemory.buffers, resumed.ReplayMemory.buffers):
             np.testing.assert_array_equal(loaded.frames, saved.frames)
             assert loaded.idx == saved.idx
-    for name, weights in agent.MainModel.state_dict().items():
-        torch.testing.assert_close(resumed.MainModel.state_dict()[name], weights)
-        torch.testing.assert_close(resumed.TargetModel.state_dict()[name], weights)
+    torch.testing.assert_close(resumed.MainModel.state_dict(), agent.MainModel.state_dict(), rtol=0, atol=0)
+    torch.testing.assert_close(resumed.TargetModel.state_dict(), agent.TargetModel.state_dict(), rtol=0, atol=0)
+    torch.testing.assert_close(
+        resumed.MainModel.optimizer.state_dict(), agent.MainModel.optimizer.state_dict(), rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize("filename, state_name", [
+    ("model.pth", "main-network/optimizer"),
+    ("target.pth", "target-network"),
+])
+def test_missing_model_state_is_unsupported(tmp_path, filename, state_name):
+    agent = _agent(1)
+    _record_training(agent)
+    agent.save(str(tmp_path))
+    (tmp_path / "model" / filename).unlink()
+    resumed = _agent(1)
+    resumed.MainModel.load_model = Mock()
+    resumed.TargetModel.set_weights = Mock()
+
+    with pytest.raises(ValueError, match=f"no {filename} {state_name} state.*without --resume-from"):
+        resumed.load(str(tmp_path))
+
+    resumed.MainModel.load_model.assert_not_called()
+    resumed.TargetModel.set_weights.assert_not_called()
 
 
 @pytest.mark.parametrize("saved_num_envs, requested_num_envs", [(1, 2), (2, 1)])
