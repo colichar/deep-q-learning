@@ -59,7 +59,7 @@ def test_vectorized_training_checkpoint_resume(tmp_path):
         assert resumed.vec_env.num_envs == 2
         resumed.load(str(tmp_path))
 
-        assert resumed.start_frame_num == agent.frame_nums[-1]
+        assert resumed.start_frame_num == agent.start_frame_num == 600
         assert resumed.frame_nums == agent.frame_nums
         assert resumed.averaged_losses == agent.averaged_losses
         assert resumed.rewards == agent.rewards
@@ -72,12 +72,42 @@ def test_vectorized_training_checkpoint_resume(tmp_path):
 
         resumed.train()
 
+        assert resumed.start_frame_num == 1200
         assert len(resumed.averaged_losses) > len(agent.averaged_losses)
         assert np.isfinite(resumed.averaged_losses).all()
         assert resumed.frame_nums[-1] > agent.frame_nums[-1]
         assert len(resumed.rewards) > len(agent.rewards)
         for saved, continued in zip(agent.ReplayMemory.buffers, resumed.ReplayMemory.buffers):
             assert continued.count > saved.count
+    finally:
+        resumed.close()
+
+
+@pytest.mark.parametrize("memory_warmup", [100, 18], ids=["pre-warmup", "pre-first-average"])
+def test_early_vector_checkpoint_resumes_without_loss_reports(tmp_path, memory_warmup):
+    kwargs = dict(num_envs=3, memory_size=96, memory_warmup=memory_warmup,
+                  batch_size=6, max_train_frames=26, average_loss_freq=100)
+    agent = SpaceInvaderAgent(**kwargs)
+    try:
+        agent.train()
+        assert agent.start_frame_num == agent.ReplayMemory.count == 27
+        agent.train()
+        assert agent.start_frame_num == agent.ReplayMemory.count == 54
+        assert agent.frame_nums == agent.averaged_losses == []
+        assert bool(agent.losses) is (memory_warmup == 18)
+        agent.save(str(tmp_path))
+    finally:
+        agent.close()
+
+    resumed = SpaceInvaderAgent(**kwargs)
+    try:
+        resumed.load(str(tmp_path))
+        assert resumed.start_frame_num == 54
+        assert resumed.losses == agent.losses
+        assert resumed.rewards == agent.rewards
+        resumed.train()
+        assert resumed.start_frame_num == resumed.ReplayMemory.count == 81
+        assert resumed.frame_nums == []
     finally:
         resumed.close()
 
@@ -109,8 +139,8 @@ def test_train_writes_periodic_checkpoint_resumable(tmp_path):
     # proves checkpointing fired on its own mid-run, without an explicit agent.save() call
     history_dir = checkpoint_path / "history"
     mid_run_files = list(history_dir.glob("train_history_*"))
-    assert len(mid_run_files) == 1
-    mid_run_frame = int(mid_run_files[0].name.rsplit("_", 1)[-1])
+    assert len(mid_run_files) == 2
+    mid_run_frame = max(int(path.name.rsplit("_", 1)[-1]) for path in mid_run_files)
     assert 0 < mid_run_frame < agent.max_train_frames
 
     # mirrors train.py's final save(), reproducing the multi-file case load_train_history handles
@@ -120,7 +150,7 @@ def test_train_writes_periodic_checkpoint_resumable(tmp_path):
     resumed = SpaceInvaderAgent(**AGENT_KWARGS)
     resumed.load(str(checkpoint_path))
 
-    assert resumed.start_frame_num == agent.frame_nums[-1]
+    assert resumed.start_frame_num == agent.start_frame_num == 600
     assert resumed.start_frame_num > mid_run_frame
 
     resumed.train()

@@ -76,8 +76,8 @@ to see this same list from the CLI.
 | `--average-loss-freq` | `400` | Average and record the loss over the last N frames. |
 | `--discount` | `0.99` | Discount factor (gamma) used in the Q-learning target. |
 | `--num-envs` | `1` | Number of parallel ALE sub-envs to train against. `1` uses a `SyncVectorEnv` (single-env behavior); `>1` uses a subprocess-based `AsyncVectorEnv`. `--memory-size` is split evenly across sub-envs, not multiplied by N. Must match the checkpoint's saved `num_envs` when resuming. |
-| `--resume-from` | `None` | Path to a checkpoint directory to resume training from. Requires `checkpoint_metadata.json` with `num_envs`; older checkpoints without this metadata are unsupported (no migration). |
-| `--save-path` | `scripts/output` | Path to save the checkpoint to. Holds replay memory (`replay_memory/`), model + optimizer weights (`model/`), and training history (`history/`), plus `checkpoint_metadata.json` written on every save even when replay or history is skipped. |
+| `--resume-from` | `None` | Path to a checkpoint directory to resume training from. Requires `checkpoint_metadata.json` with `num_envs` and training history with `completed_transitions`. |
+| `--save-path` | `scripts/output` | Path to save the checkpoint to. Holds replay memory (`replay_memory/`), model + optimizer weights (`model/`), and training history (`history/`), plus `checkpoint_metadata.json`. |
 | `--metrics-dir` | `scripts/output/metrics` | Directory to write `episodes.csv`/`losses.csv` to incrementally during training. |
 | `--checkpoint-freq` | `25000` | Save a checkpoint to `--save-path` every N frames during training. |
 | `--replay-checkpoint-freq` | `None` (defaults to `--checkpoint-freq`) | Save the replay memory buffer (the expensive part of a checkpoint) every N frames, independently of `--checkpoint-freq`. Must be a multiple of `--checkpoint-freq`. Set higher than `--checkpoint-freq` to checkpoint model/history often while writing the multi-GB replay buffer less often. |
