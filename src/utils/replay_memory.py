@@ -24,11 +24,12 @@ class ReplayMemory:
         self.actions = zeros(capacity, dtype=int64)
         self.rewards = zeros(capacity, dtype=float32)
         self.terminal = zeros(capacity, dtype=bool_)
+        self.boundary = zeros(capacity, dtype=bool_)
 
         self.idx = 0
         self.count = 0
 
-    def add_frame(self, frame, action, reward, terminal):
+    def add_frame(self, frame, action, reward, terminal, boundary=None):
         """
         Adds a single new preprocessed frame and its metadata to the replay memory.
 
@@ -37,12 +38,16 @@ class ReplayMemory:
         - action (int): action that was taken and produced this frame (i.e. the action
           taken from the *previous* state, not from the state this frame completes).
         - reward (float): reward received for that action.
-        - terminal (bool): whether this frame ended the episode (lives == 0).
+        - terminal (bool): whether to disable bootstrap for the transition into this
+          frame, including learning terminals on life loss.
+        - boundary (bool): whether history ends after this frame. Defaults to terminal
+          to preserve life-loss boundaries for callers that only supply terminal.
         """
         self.frames[self.idx] = frame
         self.actions[self.idx] = action
         self.rewards[self.idx] = reward
         self.terminal[self.idx] = terminal
+        self.boundary[self.idx] = terminal if boundary is None else boundary
 
         self.idx = (self.idx + 1) % self.capacity
         self.count = min(self.count + 1, self.capacity)
@@ -58,10 +63,9 @@ class ReplayMemory:
         curr_state -> next_state where next_state is the state ending at `index` and
         curr_state is the state ending at `index - 1` (see get_batch). It is samplable
         only if state_length frames of history exist behind it - enough to build both
-        of those state windows - and none of those state_length preceding frames belong
-        to a different episode than `index` itself. `index` itself is allowed to be
-        terminal (it's the natural terminal transition), so it's excluded from that
-        check.
+        of those state windows - and none of those state_length preceding frames has
+        a boundary after it. A boundary after `index` itself is allowed: the transition
+        into that frame still has intact history, regardless of its bootstrap mask.
 
         Before the buffer has wrapped, the oldest frame is at position 0. Once it has
         wrapped, the oldest frame is at `self.idx` (the next slot due to be overwritten)
@@ -75,7 +79,7 @@ class ReplayMemory:
             return False
 
         for offset in range(1, self.state_length + 1):
-            if self.terminal[(index - offset) % self.capacity]:
+            if self.boundary[(index - offset) % self.capacity]:
                 # window would mix frames from different episodes
                 return False
 
@@ -126,6 +130,7 @@ class ReplayMemory:
             actions=self.actions,
             rewards=self.rewards,
             terminal=self.terminal,
+            boundary=self.boundary,
             idx=self.idx,
             count=self.count,
         )
@@ -140,6 +145,12 @@ class ReplayMemory:
             raise FileNotFoundError(f"No replay memory found at '{file_path}'.")
 
         data = np.load(file_path)
+        if "boundary" not in data:
+            raise ValueError(
+                f"Replay memory '{file_path}' has no boundary metadata. Older replay "
+                "checkpoints are unsupported; start a new run without --resume-from "
+                "using a new --save-path."
+            )
         if data["frames"].shape != self.frames.shape:
             raise ValueError(
                 f"Loaded replay memory shape {data['frames'].shape} doesn't match "
@@ -150,6 +161,7 @@ class ReplayMemory:
         self.actions = data["actions"]
         self.rewards = data["rewards"]
         self.terminal = data["terminal"]
+        self.boundary = data["boundary"]
         self.idx = int(data["idx"])
         self.count = int(data["count"])
 
@@ -189,7 +201,7 @@ class VectorizedReplayMemory:
         base, remainder = divmod(batch_size, num_envs)
         return [base + 1 if i < remainder else base for i in range(num_envs)]
 
-    def add_frames(self, frames, actions, rewards, terminals):
+    def add_frames(self, frames, actions, rewards, terminals, boundaries=None):
         """
         Adds one new frame per sub-env for this tick.
 
@@ -199,9 +211,14 @@ class VectorizedReplayMemory:
         - actions: (num_envs,) ints.
         - rewards: (num_envs,) floats.
         - terminals: (num_envs,) bools.
+        - boundaries: (num_envs,) bools, defaults to terminals.
         """
-        for buffer, frame, action, reward, terminal in zip(self.buffers, frames, actions, rewards, terminals):
-            buffer.add_frame(frame, action, reward, terminal)
+        if boundaries is None:
+            boundaries = terminals
+        for buffer, frame, action, reward, terminal, boundary in zip(
+            self.buffers, frames, actions, rewards, terminals, boundaries
+        ):
+            buffer.add_frame(frame, action, reward, terminal, boundary)
 
     def get_batch(self):
         """
