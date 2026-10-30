@@ -4,7 +4,7 @@ from src.models.cnn import CNNModelPY
 from src.utils.space_invaders import NoopResetEnv, make_space_invaders_env
 
 from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
-from torch import where, no_grad, tensor, device as torch_device
+from torch import where, no_grad, tensor, save, load, device as torch_device
 from torch.cuda import is_available
 from torchvision.transforms import Resize
 import numpy as np
@@ -517,8 +517,8 @@ class SpaceInvaderAgent:
         self.ReplayMemory.save_replay_memory(path)
 
     def save_model(self, path):
-        # Save model weights
         self.MainModel.save_model(path)
+        save(self.TargetModel.get_weights(), path + '/target.pth')
 
     def save_train_history(self, path):
         if not os.path.exists(path):
@@ -588,8 +588,16 @@ class SpaceInvaderAgent:
         self.ReplayMemory.load_replay_memory(path)
 
     def load_model(self, path):
+        try:
+            target_weights = load(path + '/target.pth', map_location=self.TargetModel.device)
+        except FileNotFoundError as error:
+            raise ValueError(
+                f"Checkpoint '{path}' has no target.pth target-network state. "
+                "Checkpoints without target state are unsupported; resume from a checkpoint "
+                "that includes it, or start a new run without --resume-from using a new --save-path."
+            ) from error
         self.MainModel.load_model(path)
-        self.TargetModel.set_weights(self.MainModel.get_weights())
+        self.TargetModel.set_weights(target_weights)
 
     def load_train_history(self, path):
         if not os.path.exists(path):
