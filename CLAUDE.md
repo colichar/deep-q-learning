@@ -107,8 +107,9 @@ Key design points worth knowing before touching this code:
 - `agent.save(path)` / `agent.load(path)` persist three things independently under `path/`: replay memory
   (`.npz`), model + optimizer state (`torch.save`), and training history (pickle) — this exists so training can
   resume across sessions on time-boxed compute (e.g. Kaggle's 9h session cap, see README "Results of first
-  training"). `load_train_history` also restores `start_frame_num` so a resumed run continues the frame count
-  instead of restarting it.
+  training"). `start_frame_num` tracks completed transitions after each replay insertion; history persists it
+  as `completed_transitions`, independently of loss reports, so repeated and resumed training continue exactly.
+  History is saved even before learning begins; older histories without this counter cannot be resumed.
 - Uses `gymnasium` + `ale-py` 0.12.x (`import gymnasium as gym` + `gym.register_envs(ale_py)`), not the legacy
   `gym` package (`gym==0.26.2`/`ale-py==0.8.1` has no Python 3.12 wheels).
 

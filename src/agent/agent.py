@@ -115,7 +115,7 @@ class SpaceInvaderAgent:
         self.num_envs = num_envs
         self.vec_env = self._make_vec_env(num_envs)
 
-        self.start_frame_num = 0
+        self.start_frame_num = 0  # Completed transitions, including between loss reports.
 
         self.batch_size = batch_size
         self.max_train_frames = max_train_frames
@@ -284,6 +284,7 @@ class SpaceInvaderAgent:
                 self.ReplayMemory.add_frames(
                     new_frames.numpy(), curr_actions, clipped_rewards, life_lost | ~alive
                 )
+                self.start_frame_num += self.num_envs
 
                 # Gate on actual replay-memory content, not frame_num:
                 # This way new memory warmup when old replay memory not available
@@ -525,11 +526,8 @@ class SpaceInvaderAgent:
             os.makedirs(path)
             print(f"Folder '{path}' created.")
 
-        if not self.frame_nums:
-            print("No training history to save (no average_loss_freq checkpoint was reached); skipping.")
-            return
-
         train_history = {
+            "completed_transitions": self.start_frame_num,
             "averaged_losses": self.averaged_losses,
             "frame_nums": self.frame_nums,
             "losses": self.losses,
@@ -537,7 +535,7 @@ class SpaceInvaderAgent:
             "cumulative_wall_clock_seconds": self.cumulative_wall_clock_seconds,
         }
 
-        with open(path + f'/train_history_{self.frame_nums[-1]}', 'wb') as file:
+        with open(path + f'/train_history_{self.start_frame_num}', 'wb') as file:
             pickle.dump(train_history, file)
 
     def load(self,
@@ -569,6 +567,9 @@ class SpaceInvaderAgent:
                 "using a new --save-path."
             )
 
+        print('Loading training history from disk...')
+        self.load_train_history(path + '/history')
+        print('Training history loaded.')
         print('Loading replay memory from disk...')
         try:
             self.load_replay_memory(path + '/replay_memory')
@@ -579,10 +580,9 @@ class SpaceInvaderAgent:
                 "replay_checkpoint_freq > checkpoint_freq if this checkpoint was written before "
                 "the first replay-memory save). Continuing with a freshly initialized, empty replay memory."
             )
-        print('Loading model weights and training history from disk...')
+        print('Loading model weights from disk...')
         self.load_model(path + '/model')
-        self.load_train_history(path + '/history')
-        print('Model weights and training history loaded.')
+        print('Model weights loaded.')
 
     def load_replay_memory(self, path):
         self.ReplayMemory.load_replay_memory(path)
@@ -592,12 +592,17 @@ class SpaceInvaderAgent:
         self.TargetModel.set_weights(self.MainModel.get_weights())
 
     def load_train_history(self, path):
+        resume_error = (
+            "Exact completed-transition progress and training history are required to resume. "
+            "Older checkpoints are unsupported; start a new run without --resume-from "
+            "using a new --save-path."
+        )
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Folder '{path}' does not exist.")
+            raise FileNotFoundError(f"Folder '{path}' does not exist. {resume_error}")
 
         matches = glob.glob(os.path.join(path, 'train_history_*'))
         if not matches:
-            raise FileNotFoundError(f"No train_history_* file found in '{path}'.")
+            raise FileNotFoundError(f"No train_history_* file found in '{path}'. {resume_error}")
 
         # filename embeds the frame number, not a fixed name, so repeated saves accumulate here
         latest_match = max(matches, key=lambda p: int(p.rsplit('_', 1)[-1]))
@@ -606,7 +611,19 @@ class SpaceInvaderAgent:
         with open(latest_match, 'rb') as file:
             train_history = pickle.load(file)
 
-        print(train_history.keys())
+        required_fields = {"completed_transitions", "losses", "averaged_losses", "frame_nums", "rewards"}
+        missing_fields = required_fields - train_history.keys()
+        if missing_fields:
+            raise ValueError(
+                f"Training history '{latest_match}' is missing required fields: "
+                f"{', '.join(sorted(missing_fields))}. {resume_error}"
+            )
+        completed_transitions = train_history["completed_transitions"]
+        if type(completed_transitions) is not int or completed_transitions < 0:
+            raise ValueError(
+                f"Training history '{latest_match}' has invalid completed_transitions "
+                f"({completed_transitions!r}); expected a non-negative integer. {resume_error}"
+            )
 
         self.losses = train_history["losses"]
         self.averaged_losses = train_history["averaged_losses"]
@@ -618,4 +635,4 @@ class SpaceInvaderAgent:
         # .get(..., 0.0) for backward compatibility with pickles saved before this field existed.
         self.cumulative_wall_clock_seconds = train_history.get("cumulative_wall_clock_seconds", 0.0)
 
-        self.start_frame_num = train_history["frame_nums"][-1]
+        self.start_frame_num = completed_transitions
