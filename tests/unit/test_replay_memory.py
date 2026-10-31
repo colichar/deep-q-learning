@@ -45,10 +45,12 @@ def _assert_no_boundary_violations(mem, episode_id, capacity):
 def test_memory_footprint():
     capacity = 1_000_000
     mem = ReplayMemory(capacity=capacity, batch_size=32)
-    total_bytes = mem.frames.nbytes + mem.actions.nbytes + mem.rewards.nbytes + mem.terminal.nbytes
+    total_bytes = sum(
+        getattr(mem, name).nbytes for name in ("frames", "actions", "rewards", "terminal", "boundary")
+    )
 
     # Paper's target is ~6.6GB for a single-frame uint8 buffer at this capacity;
-    # this layout (frames + actions + rewards + terminal) lands close to that.
+    # this layout (frames + actions + rewards + terminal + boundary) lands close to that.
     assert total_bytes / 1e9 == pytest.approx(7.07, abs=0.1)
 
 
@@ -87,6 +89,39 @@ def test_get_batch_aligns_states_with_their_action():
         assert rewards[b].item() == action
 
 
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_history_boundary_preserves_transition_bootstrap(terminal, wrapped, monkeypatch):
+    mem = ReplayMemory(capacity=16, batch_size=2, frame_height=1, frame_width=1)
+    boundary_frame = 30 if wrapped else 6
+    last_frame = boundary_frame + 5
+    for i in range(last_frame + 1):
+        boundary = i == boundary_frame or (wrapped and i == 1)
+        mem.add_frame(
+            np.full((1, 1), i, dtype=np.uint8), action=i, reward=float(i),
+            terminal=terminal and boundary, boundary=None if terminal else boundary,
+        )
+
+    assert mem._valid_index(boundary_frame % mem.capacity)
+    for i in range(boundary_frame + 1, boundary_frame + mem.state_length + 1):
+        assert not mem._valid_index(i % mem.capacity)
+    assert mem._valid_index(last_frame % mem.capacity)
+    oldest = mem.idx if wrapped else 0
+    for i in range(mem.state_length):
+        assert not mem._valid_index((oldest + i) % mem.capacity)
+
+    indices = iter([boundary_frame % mem.capacity, last_frame % mem.capacity])
+    monkeypatch.setattr("src.utils.replay_memory.randint", lambda *args: next(indices))
+    curr_states, next_states, actions, rewards, terminals = mem.get_batch()
+
+    for row, frame in enumerate((boundary_frame, last_frame)):
+        assert curr_states[row, :, 0, 0].tolist() == list(range(frame - 4, frame))
+        assert next_states[row, :, 0, 0].tolist() == list(range(frame - 3, frame + 1))
+    assert actions.tolist() == [boundary_frame, last_frame]
+    assert rewards.tolist() == [float(boundary_frame), float(last_frame)]
+    assert terminals.tolist() == [terminal, False]
+
+
 def test_save_load_roundtrip(tmp_path):
     capacity = 500
     mem = ReplayMemory(capacity=capacity, batch_size=32)
@@ -101,6 +136,7 @@ def test_save_load_roundtrip(tmp_path):
     assert np.array_equal(loaded.actions, mem.actions)
     assert np.array_equal(loaded.rewards, mem.rewards)
     assert np.array_equal(loaded.terminal, mem.terminal)
+    assert np.array_equal(loaded.boundary, mem.boundary)
     assert loaded.idx == mem.idx
     assert loaded.count == mem.count
 
@@ -118,3 +154,14 @@ def test_save_load_shape_mismatch(tmp_path):
     mismatched = ReplayMemory(capacity=1000, batch_size=32)
     with pytest.raises(ValueError):
         mismatched.load_replay_memory(str(tmp_path))
+
+
+def test_load_rejects_checkpoint_without_boundary_metadata(tmp_path):
+    mem = ReplayMemory(capacity=16, batch_size=2, frame_height=1, frame_width=1)
+    np.savez(
+        tmp_path / "replay_memory.npz",
+        **{name: getattr(mem, name) for name in ("frames", "actions", "rewards", "terminal", "idx", "count")},
+    )
+
+    with pytest.raises(ValueError, match="no boundary metadata.*without --resume-from"):
+        mem.load_replay_memory(str(tmp_path))

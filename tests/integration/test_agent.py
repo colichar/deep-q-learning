@@ -65,7 +65,7 @@ def test_vectorized_training_checkpoint_resume(tmp_path):
         assert resumed.rewards == agent.rewards
         assert len(resumed.ReplayMemory.buffers) == 2
         for saved, loaded in zip(agent.ReplayMemory.buffers, resumed.ReplayMemory.buffers):
-            for name in ("frames", "actions", "rewards", "terminal"):
+            for name in ("frames", "actions", "rewards", "terminal", "boundary"):
                 np.testing.assert_array_equal(getattr(loaded, name), getattr(saved, name))
             assert loaded.idx == saved.idx
             assert loaded.count == saved.count

@@ -5,7 +5,7 @@ sub-buffers, one per parallel env - see issue #26 / epic #25).
 import numpy as np
 import pytest
 
-from src.utils.replay_memory import VectorizedReplayMemory
+from src.utils.replay_memory import ReplayMemory, VectorizedReplayMemory
 
 
 def _fill_with_episodes(vmem, capacity_per_env, num_writes, seed=0):
@@ -61,6 +61,10 @@ def test_capacity_split_across_subbuffers():
     assert len(vmem.buffers) == num_envs
     for buffer in vmem.buffers:
         assert buffer.capacity == capacity // num_envs
+
+    single = ReplayMemory(capacity=capacity, batch_size=32)
+    for name in ("frames", "actions", "rewards", "terminal", "boundary"):
+        assert sum(getattr(buffer, name).nbytes for buffer in vmem.buffers) == getattr(single, name).nbytes
 
 
 def test_num_envs_one_keeps_full_capacity_and_batch_size():
@@ -133,3 +137,35 @@ def test_get_batch_correctness():
     assert actions.shape == (batch_size,)
     assert rewards.shape == (batch_size,)
     assert terminal.shape == (batch_size,)
+
+
+def test_independent_boundaries_and_terminals_survive_roundtrip(tmp_path, monkeypatch):
+    mem = VectorizedReplayMemory(2, 32, 2, frame_height=1, frame_width=1)
+    for i in range(28):
+        mem.add_frames(
+            np.full((2, 1, 1), i, dtype=np.uint8), [i, i], [1.0, 1.0],
+            terminals=[False, i == 21], boundaries=[i == 22, i == 21],
+        )
+    mem.save_replay_memory(str(tmp_path))
+    loaded = VectorizedReplayMemory(2, 32, 2, frame_height=1, frame_width=1)
+    loaded.load_replay_memory(str(tmp_path))
+
+    for original, restored in zip(mem.buffers, loaded.buffers):
+        for name in ("frames", "actions", "rewards", "terminal", "boundary"):
+            assert np.array_equal(getattr(original, name), getattr(restored, name))
+        assert restored.idx == original.idx
+        assert restored.count == original.count
+
+    assert loaded.buffers[0]._valid_index(6)
+    assert not loaded.buffers[1]._valid_index(6)
+    assert not loaded.buffers[0]._valid_index(10)
+    assert loaded.buffers[1]._valid_index(10)
+    indices = iter([6, 5])
+    monkeypatch.setattr("src.utils.replay_memory.randint", lambda *args: next(indices))
+    curr_states, next_states, actions, rewards, terminals = loaded.get_batch()
+
+    assert curr_states[:, :, 0, 0].tolist() == [[18, 19, 20, 21], [17, 18, 19, 20]]
+    assert next_states[:, :, 0, 0].tolist() == [[19, 20, 21, 22], [18, 19, 20, 21]]
+    assert actions.tolist() == [22, 21]
+    assert rewards.tolist() == [1.0, 1.0]
+    assert terminals.tolist() == [False, True]

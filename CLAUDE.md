@@ -82,7 +82,9 @@ Key design points worth knowing before touching this code:
   here: it
   rejects indices without `state_length` frames of real history behind them, and indices whose `state_length`
   preceding frames (not including `i` itself, which is allowed to be the terminal frame) cross an episode
-  boundary (`terminal` flag). Any change to write/sample logic must keep both invariants intact — see
+  boundary (`boundary` flag). Boundaries end history after a frame; `terminal` independently disables bootstrap
+  for the transition into it. Writes default the boundary to terminal to preserve life-loss behavior.
+  Any change to write/sample logic must keep both invariants intact — see
   `tests/unit/test_replay_memory.py` for the boundary/wraparound/alignment tests that guard this.
 - **`utils/replay_memory_from_disk.py` (`ReplayMemoryFromDisk`) is an orphaned earlier design** (disk-backed
   `torch.utils.data.Dataset`) — it is not imported by the agent and predates the ring-buffer approach above. Treat
@@ -95,7 +97,7 @@ Key design points worth knowing before touching this code:
   lives are gone. The *live* `curr_state` used for action selection is deliberately **not** reset on life loss —
   `Preprocessor.new_state` always shifts-and-appends, so for up to 3 frames after a respawn the acting stack still
   contains pre-death frames. This is intentional, not an oversight: replay sampling is unaffected (`_valid_index`
-  already excludes any window crossing a `terminal` frame), and resetting the acting stack to a repeated single
+  already excludes any window crossing a boundary), and resetting the acting stack to a repeated single
   frame would erase motion/velocity cues right when they matter most. Matches common practice in other DQN
   implementations (e.g. OpenAI Baselines' `EpisodicLifeEnv` + frame-stack combo behaves the same way).
 - **Reward is clipped to {-1, 0, 1}** before being stored, per the papers; `episode_reward` (used for logging/plots)
