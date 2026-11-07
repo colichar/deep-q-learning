@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project
 
 A from-scratch reimplementation of DeepMind's DQN Atari papers (Mnih et al. 2013, Mnih et al. 2015), applied to
@@ -82,9 +78,7 @@ Key design points worth knowing before touching this code:
   here: it
   rejects indices without `state_length` frames of real history behind them, and indices whose `state_length`
   preceding frames (not including `i` itself, which is allowed to be the terminal frame) cross an episode
-  boundary (`boundary` flag). Boundaries end history after a frame; `terminal` independently disables bootstrap
-  for the transition into it. Writes default the boundary to terminal to preserve life-loss behavior.
-  Any change to write/sample logic must keep both invariants intact — see
+  boundary (`terminal` flag). Any change to write/sample logic must keep both invariants intact — see
   `tests/unit/test_replay_memory.py` for the boundary/wraparound/alignment tests that guard this.
 - **`utils/replay_memory_from_disk.py` (`ReplayMemoryFromDisk`) is an orphaned earlier design** (disk-backed
   `torch.utils.data.Dataset`) — it is not imported by the agent and predates the ring-buffer approach above. Treat
@@ -97,7 +91,7 @@ Key design points worth knowing before touching this code:
   lives are gone. The *live* `curr_state` used for action selection is deliberately **not** reset on life loss —
   `Preprocessor.new_state` always shifts-and-appends, so for up to 3 frames after a respawn the acting stack still
   contains pre-death frames. This is intentional, not an oversight: replay sampling is unaffected (`_valid_index`
-  already excludes any window crossing a boundary), and resetting the acting stack to a repeated single
+  already excludes any window crossing a `terminal` frame), and resetting the acting stack to a repeated single
   frame would erase motion/velocity cues right when they matter most. Matches common practice in other DQN
   implementations (e.g. OpenAI Baselines' `EpisodicLifeEnv` + frame-stack combo behaves the same way).
 - **Reward is clipped to {-1, 0, 1}** before being stored, per the papers; `episode_reward` (used for logging/plots)
@@ -109,9 +103,8 @@ Key design points worth knowing before touching this code:
 - `agent.save(path)` / `agent.load(path)` persist three things independently under `path/`: replay memory
   (`.npz`), model + optimizer state (`torch.save`), and training history (pickle) — this exists so training can
   resume across sessions on time-boxed compute (e.g. Kaggle's 9h session cap, see README "Results of first
-  training"). `start_frame_num` tracks completed transitions after each replay insertion; history persists it
-  as `completed_transitions`, independently of loss reports, so repeated and resumed training continue exactly.
-  History is saved even before learning begins; older histories without this counter cannot be resumed.
+  training"). `load_train_history` also restores `start_frame_num` so a resumed run continues the frame count
+  instead of restarting it.
 - Uses `gymnasium` + `ale-py` 0.12.x (`import gymnasium as gym` + `gym.register_envs(ale_py)`), not the legacy
   `gym` package (`gym==0.26.2`/`ale-py==0.8.1` has no Python 3.12 wheels).
 
