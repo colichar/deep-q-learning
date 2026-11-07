@@ -169,3 +169,30 @@ def test_independent_boundaries_and_terminals_survive_roundtrip(tmp_path, monkey
     assert actions.tolist() == [22, 21]
     assert rewards.tolist() == [1.0, 1.0]
     assert terminals.tolist() == [False, True]
+
+
+def test_mark_restart_boundaries_seals_each_subbuffer_seam(tmp_path):
+    mem = VectorizedReplayMemory(2, 32, 2, frame_height=1, frame_width=1)
+    for i in range(6):
+        mem.add_frames(
+            np.full((2, 1, 1), i, dtype=np.uint8), [i, i], [1.0, 1.0],
+            terminals=[False, False],
+        )
+    mem.save_replay_memory(str(tmp_path))
+    loaded = VectorizedReplayMemory(2, 32, 2, frame_height=1, frame_width=1)
+    loaded.load_replay_memory(str(tmp_path))
+    for buffer in loaded.buffers:
+        assert not buffer.boundary.any()
+
+    loaded.mark_restart_boundaries()
+
+    for buffer in loaded.buffers:
+        seam = (buffer.idx - 1) % buffer.capacity
+        assert buffer.boundary.sum() == 1 and buffer.boundary[seam]
+        assert not buffer.terminal.any()  # bootstrap targets untouched
+
+
+def test_mark_restart_boundaries_noop_on_empty_buffers():
+    mem = VectorizedReplayMemory(3, 32, 2, frame_height=1, frame_width=1)
+    mem.mark_restart_boundaries()
+    assert all(not buffer.boundary.any() for buffer in mem.buffers)

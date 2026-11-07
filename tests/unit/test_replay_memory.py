@@ -165,3 +165,74 @@ def test_load_rejects_checkpoint_without_boundary_metadata(tmp_path):
 
     with pytest.raises(ValueError, match="no boundary metadata.*without --resume-from"):
         mem.load_replay_memory(str(tmp_path))
+
+
+def _restart_scenario(tmp_path, capacity, old_writes, new_writes, terminal_at_seam, seed=0):
+    """Builds a restored buffer with old and fresh frames labeled by episode."""
+    rng = np.random.default_rng(seed)
+    episode_id = np.zeros(capacity, dtype=np.int64)
+
+    mem = ReplayMemory(capacity=capacity, batch_size=2, frame_height=1, frame_width=1)
+    for _ in range(old_writes):
+        slot = mem.idx
+        mem.add_frame(rng.integers(0, 256, size=(1, 1), dtype=np.uint8),
+                      action=0, reward=0.0, terminal=False)
+        episode_id[slot] = 0
+    seam = (mem.idx - 1) % capacity
+    if terminal_at_seam:
+        mem.terminal[seam] = True
+
+    mem.save_replay_memory(str(tmp_path))
+    loaded = ReplayMemory(capacity=capacity, batch_size=2, frame_height=1, frame_width=1)
+    loaded.load_replay_memory(str(tmp_path))
+    loaded.mark_restart_boundary()
+
+    for _ in range(new_writes):
+        slot = loaded.idx
+        loaded.add_frame(rng.integers(0, 256, size=(1, 1), dtype=np.uint8),
+                         action=1, reward=1.0, terminal=False)
+        episode_id[slot] = 1
+
+    return loaded, episode_id, seam
+
+
+@pytest.mark.parametrize("terminal_at_seam", [False, True])
+def test_mark_restart_boundary_isolates_fresh_appends(tmp_path, terminal_at_seam):
+    """Non-wrapped seam (count == 10, capacity == 16): the seam's own transition
+    stays samplable with its terminal unchanged, and no valid sample mixes episodes."""
+    loaded, episode_id, seam = _restart_scenario(tmp_path, capacity=16, old_writes=10, new_writes=6,
+                                                 terminal_at_seam=terminal_at_seam)
+
+    assert loaded.boundary[seam]
+    assert loaded.terminal[seam] == terminal_at_seam
+    assert loaded._valid_index(seam)
+
+    # A transition needs four preceding frames from the fresh game.
+    assert not loaded._valid_index(10) and not loaded._valid_index(12)
+    assert loaded._valid_index(14) and episode_id[14] == 1
+
+    for _ in range(50):
+        loaded.get_batch()
+    _assert_no_boundary_violations(loaded, episode_id, capacity=16)
+
+
+def test_mark_restart_boundary_isolates_fresh_appends_when_wrapped(tmp_path):
+    """Wrapped seam (count == capacity == 12): the newest old frame is at idx - 1 and
+    new frames overwrite the ring's oldest end - the mark must keep both mixes out."""
+    loaded, episode_id, seam = _restart_scenario(tmp_path, capacity=12, old_writes=16, new_writes=4,
+                                                 terminal_at_seam=False)
+
+    assert loaded.boundary[seam]
+    for i in range(4, 8):
+        assert not loaded._valid_index(i)
+
+    for _ in range(50):
+        loaded.get_batch()
+    _assert_no_boundary_violations(loaded, episode_id, capacity=12)
+
+
+def test_mark_restart_boundary_empty_buffer_is_noop():
+    mem = ReplayMemory(capacity=16, batch_size=2, frame_height=1, frame_width=1)
+    mem.mark_restart_boundary()
+    assert not mem.boundary.any()
+    assert mem.count == 0 and not mem.terminal.any()

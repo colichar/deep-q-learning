@@ -25,6 +25,7 @@ def _agent(num_envs, optimizer="adam"):
     agent.rewards = []
     agent.cumulative_wall_clock_seconds = 0.0
     agent.start_frame_num = 0
+    agent._replay_restored_unmarked = False
     return agent
 
 
@@ -248,3 +249,28 @@ def test_legacy_history_rejected_before_loading_models_or_replay(tmp_path, has_h
     agent.load_model.assert_not_called()
     agent.load_replay_memory.assert_not_called()
     assert agent.start_frame_num == 0
+
+
+def test_resume_marks_restart_boundary_once_per_load(tmp_path):
+    agent = _training_agent(2, memory_warmup=100, average_loss_freq=100)
+    agent.train()
+    agent.save(str(tmp_path / "final"))
+    seam_positions = [(buffer.idx - 1) % buffer.capacity for buffer in agent.ReplayMemory.buffers]
+    saved_boundary = [buffer.boundary.copy() for buffer in agent.ReplayMemory.buffers]
+
+    resumed = _training_agent(2, memory_warmup=100, average_loss_freq=100)
+    resumed.load(str(tmp_path / "final"))
+    # load alone stays byte-faithful; the seal is applied only when training appends
+    for buffer, saved in zip(resumed.ReplayMemory.buffers, saved_boundary):
+        np.testing.assert_array_equal(buffer.boundary, saved)
+
+    resumed.train()
+    for buffer, seam in zip(resumed.ReplayMemory.buffers, seam_positions):
+        assert buffer.boundary[seam]
+        # mocked envs never signal life loss, so this boundary can only be the restart mark
+        assert buffer.boundary.sum() == 1
+
+    boundary_after_first = [buffer.boundary.copy() for buffer in resumed.ReplayMemory.buffers]
+    resumed.train()
+    for buffer, first_run in zip(resumed.ReplayMemory.buffers, boundary_after_first):
+        np.testing.assert_array_equal(buffer.boundary, first_run)

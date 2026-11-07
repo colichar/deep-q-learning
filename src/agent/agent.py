@@ -149,6 +149,9 @@ class SpaceInvaderAgent:
         self.ReplayMemory = VectorizedReplayMemory(self.num_envs, self.memory_size, self.batch_size)
         self.ExploreVsExploit = ExplorationVsExploitation(self.MainModel, self.my_env.action_space.n)
 
+        # Used to set the restart boundary between loaded replay and fresh new games
+        self._replay_restored_unmarked = False
+
         self.losses = []
 
         self.frame_nums = []
@@ -244,6 +247,10 @@ class SpaceInvaderAgent:
         budget_end = self.max_train_frames + self.start_frame_num
 
         if frame_num <= budget_end:
+            # Mark restart boundary of loaded memories
+            if self._replay_restored_unmarked:
+                self.ReplayMemory.mark_restart_boundaries()
+                self._replay_restored_unmarked = False
             curr_states, info = self.Preprocessor.initialize_state_vec(self.vec_env)
             prev_lives = array(info["lives"])
             episode_rewards = np_zeros(self.num_envs)
@@ -580,6 +587,9 @@ class SpaceInvaderAgent:
                 "replay_checkpoint_freq > checkpoint_freq if this checkpoint was written before "
                 "the first replay-memory save). Continuing with a freshly initialized, empty replay memory."
             )
+        # In both paths above: marking is a no-op on empty buffers, and restoring real
+        # replay means the stored frames predate this run's (always fresh) environments.
+        self._replay_restored_unmarked = True
         print('Loading model weights from disk...')
         self.load_model(path + '/model')
         print('Model weights loaded.')

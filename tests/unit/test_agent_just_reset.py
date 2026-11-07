@@ -82,6 +82,7 @@ def _make_agent(num_envs, ticks, max_train_frames):
     agent.averaged_losses = []
     agent._logged_reward_idx = 0
     agent.cumulative_wall_clock_seconds = 0.0
+    agent._replay_restored_unmarked = False
     return agent
 
 

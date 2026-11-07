@@ -52,6 +52,20 @@ class ReplayMemory:
         self.idx = (self.idx + 1) % self.capacity
         self.count = min(self.count + 1, self.capacity)
 
+    def mark_restart_boundary(self):
+        """
+        Seals the newest stored frame as a history boundary, so frames appended by a
+        fresh environment after a resume can never be sampled in the same state window
+        as pre-restart frames. Written only when a checkpoint is restored from disk;
+        an ordinary load/save round-trip is untouched. The transition into the seam
+        frame itself stays samplable with its original bootstrap mask, since
+        _valid_index exempts a boundary at `index`.
+
+        No-op on an empty buffer - there is no last stored frame to seal.
+        """
+        if self.count > 0:
+            self.boundary[(self.idx - 1) % self.capacity] = True
+
     def _get_state(self, index):
         """Gathers the state_length consecutive frames ending at `index`."""
         indices = [(index - offset) % self.capacity for offset in reversed(range(self.state_length))]
@@ -238,3 +252,9 @@ class VectorizedReplayMemory:
         """Restores each sub-buffer from its own `path/env_<i>/` subfolder."""
         for i, buffer in enumerate(self.buffers):
             buffer.load_replay_memory(os.path.join(path, f"env_{i}"))
+
+    def mark_restart_boundaries(self):
+        """Seals the seam between restored replay history and fresh-environment frames
+        in every nonempty sub-buffer. See ReplayMemory.mark_restart_boundary."""
+        for buffer in self.buffers:
+            buffer.mark_restart_boundary()
