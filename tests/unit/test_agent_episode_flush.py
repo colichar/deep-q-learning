@@ -29,7 +29,7 @@ class FakePreprocessor:
     def step_with_skip_vec(self, vec_env, actions):
         rewards, lives = next(self.ticks)
         obs = np.zeros((self.num_envs, 210, 160, 3), dtype=np.uint8)
-        return obs, np.array(rewards, dtype=float), None, None, {"lives": np.array(lives)}
+        return obs, np.array(rewards, dtype=float), np.array(lives) == 0, np.zeros(self.num_envs, dtype=bool), {"lives": np.array(lives)}
 
     def new_state_vec(self, new_raw_obs, curr_states):
         return curr_states, torch.zeros(self.num_envs, 84, 84, dtype=torch.uint8)

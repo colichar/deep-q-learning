@@ -157,7 +157,7 @@ def _training_agent(num_envs, memory_warmup, average_loss_freq):
     agent.Preprocessor = Mock()
     agent.Preprocessor.initialize_state_vec.return_value = (states, info)
     agent.Preprocessor.step_with_skip_vec.return_value = (
-        None, np.ones(num_envs), None, None, info,
+        None, np.ones(num_envs), np.zeros(num_envs, dtype=bool), np.zeros(num_envs, dtype=bool), info,
     )
     agent.Preprocessor.new_state_vec.return_value = (states, frames)
     agent.ExploreVsExploit = Mock(return_value=np.zeros(num_envs, dtype=int))

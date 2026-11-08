@@ -1,32 +1,19 @@
-"""
-Unit tests for Preprocessor.step_with_skip_vec (GitHub issue #27).
+"""Action repeat runs inside each vector worker without crossing episode boundaries."""
 
-These run against a real gymnasium SyncVectorEnv wrapping scripted sub-envs, so the
-auto-reset behaviour under test is gymnasium's actual NEXT_STEP semantics rather than
-a hand-rolled imitation of them: after a sub-env reports done, its next step() call
-returns the reset observation of the following episode (reward 0, done False), and the
-call after that is a real step of that new episode.
-
-Observations are 2-element: element 0 is `base + 100 * episode + t`, so a frame from the
-next episode maxed into a terminal frame shows up as a value >= 100 above the base, and
-rewards mirror it for the same reason. Element 0 alone rises monotonically within an
-episode, which would make `maximum(second-to-last, last)` indistinguishable from "just
-take the last frame", so element 1 bumps odd `t` by 10 to break that ordering - the
-expected values below only come out right if the last *two* frames are really maxed.
-"""
-import numpy as np
 import gymnasium as gym
-from gymnasium.vector import SyncVectorEnv
+import numpy as np
+import pytest
+from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
 
 from src.utils.preprocessor import Preprocessor
+from src.utils.space_invaders import ActionRepeatEnv
 
 
 class ScriptedEnv(gym.Env):
-    """Emits obs/reward `base + 100 * episode + t`; episode e terminates after `lengths[e]` steps."""
-
-    def __init__(self, base, lengths):
+    def __init__(self, base, lengths, truncate=False):
         self.base = base
         self.lengths = lengths
+        self.truncate = truncate
         self.observation_space = gym.spaces.Box(0, 255, shape=(2,), dtype=np.uint8)
         self.action_space = gym.spaces.Discrete(3)
         self.episode = -1
@@ -39,94 +26,69 @@ class ScriptedEnv(gym.Env):
     def reset(self, seed=None, options=None):
         self.episode += 1
         self.t = 0
-        return self._obs(), {}
+        return self._obs(), {"lives": 3}
 
     def step(self, action):
         self.t += 1
         obs = self._obs()
-        return obs, float(obs[0]), self.t >= self.lengths[self.episode], False, {}
+        done = self.t >= self.lengths[self.episode]
+        return obs, float(obs[0]), done and not self.truncate, done and self.truncate, {"lives": 3}
 
 
-def _make_vec_env(*specs):
-    vec_env = SyncVectorEnv([lambda base=b, lengths=l: ScriptedEnv(base, lengths) for b, l in specs])
-    vec_env.reset(seed=0)
-    return vec_env
+def _make_vec_env(vec_type, *specs):
+    env = vec_type([
+        lambda base=b, lengths=l, truncate=t: ActionRepeatEnv(ScriptedEnv(base, lengths, truncate))
+        for b, l, t in specs
+    ])
+    env.reset(seed=0)
+    return env
 
 
-def _actions(vec_env):
-    return np.zeros(vec_env.num_envs, dtype=np.int64)
+@pytest.mark.parametrize("vec_type", [SyncVectorEnv, AsyncVectorEnv])
+def test_staggered_ends_stop_each_worker_without_crossing_games(vec_type):
+    env = _make_vec_env(vec_type, (0, [1, 50], False), (10, [3, 50], True), (20, [50], False))
+    try:
+        obs, rewards, terminated, truncated, info = Preprocessor().step_with_skip_vec(env, [0, 0, 0])
+        assert obs.ravel().tolist() == [1, 11, 13, 23, 24, 33]
+        assert rewards.tolist() == [1, 11 + 12 + 13, 21 + 22 + 23 + 24]
+        assert terminated.tolist() == [True, False, False]
+        assert truncated.tolist() == [False, True, False]
+        assert info["lives"].tolist() == [3, 3, 3]
+
+        reset_obs, reset_info = env.reset(options={"reset_mask": np.array([True, True, False])})
+        assert reset_obs.tolist() == [[100, 100], [110, 110], [24, 33]]
+        assert reset_info["_lives"].tolist() == [True, True, False]
+
+        obs, rewards, terminated, truncated, _ = Preprocessor().step_with_skip_vec(env, [0, 0, 0])
+        assert obs.ravel().tolist() == [104, 113, 114, 123, 28, 37]
+        assert rewards.tolist() == [101 + 102 + 103 + 104, 111 + 112 + 113 + 114, 25 + 26 + 27 + 28]
+        assert not terminated.any() and not truncated.any()
+    finally:
+        env.close()
 
 
-def test_maxes_last_two_frames_of_the_group_per_sub_env():
-    vec_env = _make_vec_env((0, [50]), (10, [50]))
-    obs, rewards, terminated, truncated, _ = Preprocessor().step_with_skip_vec(
-        vec_env, _actions(vec_env)
-    )
-
-    # element 1 of each maxed obs comes from t=3, element 0 from t=4.
-    assert obs.ravel().tolist() == [4, 13, 14, 23]
-    assert rewards.tolist() == [1 + 2 + 3 + 4, 11 + 12 + 13 + 14]
-    assert not terminated.any()
-    assert not truncated.any()
+def test_end_on_first_frame_pools_with_itself():
+    env = _make_vec_env(SyncVectorEnv, (0, [1], False), (10, [50], False))
+    try:
+        obs, rewards, terminated, _, _ = Preprocessor().step_with_skip_vec(env, [0, 0])
+        assert obs.tolist() == [[1, 11], [14, 23]]
+        assert rewards.tolist() == [1, 11 + 12 + 13 + 14]
+        assert terminated.tolist() == [True, False]
+    finally:
+        env.close()
 
 
-def test_sub_env_terminating_mid_group_is_not_maxed_with_next_episode():
-    # env 0 ends on the 2nd of 4 frames, so gymnasium hands back its reset frame (100)
-    # and then a real frame of the next episode (101) for the rest of the group.
-    vec_env = _make_vec_env((0, [2, 50]), (10, [50]))
-    obs, rewards, terminated, truncated, _ = Preprocessor().step_with_skip_vec(
-        vec_env, _actions(vec_env)
-    )
-
-    assert obs.ravel().tolist() == [2, 11, 14, 23]
-    assert rewards.tolist() == [1 + 2, 11 + 12 + 13 + 14]
-    assert terminated.tolist() == [True, False]
-    assert not truncated.any()
-
-
-def test_staggered_terminations_are_frozen_independently():
-    vec_env = _make_vec_env((0, [1, 50]), (10, [3, 50]), (20, [50]))
-    obs, rewards, terminated, truncated, _ = Preprocessor().step_with_skip_vec(
-        vec_env, _actions(vec_env)
-    )
-
-    # env 0 ends on the very first frame of the group, so it maxes against itself.
-    assert obs.ravel().tolist() == [1, 11, 13, 23, 24, 33]
-    assert rewards.tolist() == [1, 11 + 12 + 13, 21 + 22 + 23 + 24]
-    assert terminated.tolist() == [True, True, False]
-    assert not truncated.any()
-
-
-def test_group_after_a_mid_group_termination_stays_inside_the_new_episode():
-    vec_env = _make_vec_env((0, [2, 50]), (10, [50]))
-    preprocessor = Preprocessor()
-    preprocessor.step_with_skip_vec(vec_env, _actions(vec_env))
-
-    obs, rewards, terminated, _, _ = preprocessor.step_with_skip_vec(vec_env, _actions(vec_env))
-
-    # env 0's new episode already spent t=0 (reset frame) and t=1 inside the previous
-    # group, so this group covers t=2..5 of it.
-    assert obs.ravel().tolist() == [105, 115, 18, 27]
-    assert rewards.tolist() == [102 + 103 + 104 + 105, 15 + 16 + 17 + 18]
-    assert not terminated.any()
-
-
-def test_single_env_path_matches_the_n1_vectorized_path():
-    preprocessor = Preprocessor()
-
-    # Two groups each: over 6 frames the second group ends on a non-first frame, over
-    # 5 frames it ends on the group's very first frame - the case where both paths have
-    # to max the terminal frame against itself.
-    for length in (6, 5):
-        single_env = ScriptedEnv(base=0, lengths=[length])
-        single_env.reset()
-        vec_env = _make_vec_env((0, [length]))
-
+def test_single_env_and_one_worker_agree():
+    single = ScriptedEnv(0, [6])
+    single.reset()
+    vector = _make_vec_env(SyncVectorEnv, (0, [6], False))
+    try:
         for _ in range(2):
-            single = preprocessor.step_with_skip(single_env, action=0)
-            vector = preprocessor.step_with_skip_vec(vec_env, _actions(vec_env))
-
-            assert vector[0].ravel().tolist() == single[0].ravel().tolist()
-            assert vector[1].tolist() == [single[1]]
-            assert vector[2].tolist() == [single[2]]
-            assert vector[3].tolist() == [single[3]]
+            expected = Preprocessor().step_with_skip(single, 0)
+            actual = Preprocessor().step_with_skip_vec(vector, [0])
+            assert actual[0][0].tolist() == expected[0].tolist()
+            assert actual[1].tolist() == [expected[1]]
+            assert actual[2].tolist() == [expected[2]]
+            assert actual[3].tolist() == [expected[3]]
+    finally:
+        vector.close()

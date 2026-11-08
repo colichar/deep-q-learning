@@ -1,10 +1,10 @@
 from src.utils.preprocessor import Preprocessor
 from src.utils.replay_memory import VectorizedReplayMemory
 from src.models.cnn import CNNModelPY
-from src.utils.space_invaders import NoopResetEnv, make_space_invaders_env
+from src.utils.space_invaders import NoopResetEnv, make_space_invaders_env, make_space_invaders_training_env
 
 from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
-from torch import where, no_grad, tensor, save, load, device as torch_device
+from torch import where, no_grad, tensor, stack, save, load, device as torch_device
 from torch.cuda import is_available
 from torchvision.transforms import Resize
 import numpy as np
@@ -168,7 +168,7 @@ class SpaceInvaderAgent:
         """SyncVectorEnv at num_envs == 1 keeps single-env training behaviorally identical
         (no subprocess indirection); AsyncVectorEnv (subprocess-based) is used for N > 1
         so N sub-envs actually step in parallel."""
-        env_fns = [make_space_invaders_env for _ in range(num_envs)]
+        env_fns = [make_space_invaders_training_env for _ in range(num_envs)]
         return SyncVectorEnv(env_fns) if num_envs == 1 else AsyncVectorEnv(env_fns)
 
     @staticmethod
@@ -258,11 +258,15 @@ class SpaceInvaderAgent:
             # so the leftover-flush below doesn't double-record an env that happened to finish
             # on the very last tick processed.
             flushed_this_tick = np.zeros(self.num_envs, dtype=bool)
-            # Holds the *previous* tick's ~alive mask: used to stop mixing frames from
-            # two episodes in the same acting state when an env that ended its episode last
-            just_reset = np.zeros(self.num_envs, dtype=bool)
+            reset_pending = np.zeros(self.num_envs, dtype=bool)
 
             while frame_num <= budget_end:
+                if reset_pending.any():
+                    reset_obs, reset_info = self.vec_env.reset(options={"reset_mask": reset_pending.copy()})
+                    reset_frames = [self.Preprocessor.preprocess_frame(reset_obs[i]) for i in np.flatnonzero(reset_pending)]
+                    curr_states[reset_pending] = stack(reset_frames).repeat(1, 4, 1, 1)
+                    prev_lives[reset_pending] = reset_info["lives"][reset_pending]
+
                 # take actions, one per sub-env
                 curr_actions = self.ExploreVsExploit(curr_states, frame_num)
 
@@ -271,7 +275,7 @@ class SpaceInvaderAgent:
                 )
 
                 lives = array(info["lives"])
-                alive = lives != 0
+                done = terminated | truncated
                 life_lost = lives < prev_lives
                 prev_lives = lives
 
@@ -282,14 +286,10 @@ class SpaceInvaderAgent:
                 # create new sequences with the new frames
                 new_states, new_frames = self.Preprocessor.new_state_vec(new_raw_obs, curr_states)
 
-                # envs whose episode ended, flush frames from previous episode
-                if just_reset.any():
-                    reset_idx = np.nonzero(just_reset)[0]
-                    new_states[reset_idx] = new_frames[reset_idx].unsqueeze(1).repeat(1, 4, 1, 1)
-
                 # store new frames, one per sub-env
                 self.ReplayMemory.add_frames(
-                    new_frames.numpy(), curr_actions, clipped_rewards, life_lost | ~alive
+                    new_frames.numpy(), curr_actions, clipped_rewards,
+                    life_lost | terminated, boundaries=life_lost | done,
                 )
                 self.start_frame_num += self.num_envs
 
@@ -339,10 +339,9 @@ class SpaceInvaderAgent:
                 curr_states = new_states
                 frame_num += self.num_envs
 
-                # a sub-env's episode ends the tick its lives hit 0; log and reset its
-                # accumulator, independently of every other sub-env's episode boundary
+                # Complete games independently of the remaining lives reported by ALE.
                 flushed_this_tick[:] = False
-                finished_envs = np.nonzero(~alive)[0]
+                finished_envs = np.flatnonzero(done)
                 if len(finished_envs) > 0:
                     epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
                     elapsed = self.cumulative_wall_clock_seconds + (time.time() - session_start)
@@ -357,7 +356,7 @@ class SpaceInvaderAgent:
                         episode_rewards[env_idx] = 0
                         flushed_this_tick[env_idx] = True
 
-                just_reset = ~alive
+                reset_pending = done
 
             # Matches the pre-vectorization single-env loop, which always recorded
             # episode_reward once the frame budget ran out, even mid-episode: flush any

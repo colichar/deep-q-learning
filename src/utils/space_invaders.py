@@ -7,6 +7,7 @@ the same Atari settings.
 import ale_py
 import gymnasium as gym
 from numpy import random
+from src.utils.preprocessor import FrameSkipStepper
 
 
 gym.register_envs(ale_py)
@@ -29,6 +30,20 @@ class NoopResetEnv(gym.Wrapper):
         return obs, info
 
 
+class ActionRepeatEnv(gym.Wrapper):
+    """Repeat each action within one game and max-pool its last two raw frames."""
+
+    def __init__(self, env, frame_skip=4):
+        super().__init__(env)
+        self.frame_skip = frame_skip
+
+    def step(self, action):
+        stepper = FrameSkipStepper(self.env, action, self.frame_skip)
+        while not stepper.complete:
+            stepper.advance()
+        return stepper.result()
+
+
 def make_space_invaders_env():
     """Create the raw-frame ALE environment expected by :class:`Preprocessor`."""
     return NoopResetEnv(gym.make(
@@ -37,3 +52,7 @@ def make_space_invaders_env():
         repeat_action_probability=0.0,
         render_mode="rgb_array",
     ))
+
+
+def make_space_invaders_training_env():
+    return ActionRepeatEnv(make_space_invaders_env())

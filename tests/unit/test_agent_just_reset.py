@@ -1,81 +1,99 @@
-"""
-Unit tests for SpaceInvaderAgent.train()'s `just_reset` handling (issue #29 review
-follow-up, Part B): once a sub-env's episode ends, the *next* tick's acting state for
-that sub-env must be seeded from scratch (4 copies of the new frame) instead of
-shift-appending onto the state stack of the episode that just ended, since gymnasium's
-NEXT_STEP auto-reset means that tick's raw obs already belongs to the new episode.
-"""
+"""Reset completed vector workers before choosing their next action."""
+
+import gymnasium as gym
 import numpy as np
+import pytest
 import torch
+from gymnasium.vector import SyncVectorEnv
 
 from src.agent.agent import SpaceInvaderAgent
+from src.utils.space_invaders import ActionRepeatEnv
 
 
-class FakePreprocessor:
-    """Feeds a prescripted (reward, lives) sequence per env, one tick at a time, and does
-    a genuine shift-append in new_state_vec (each tick's new frame is a distinct constant
-    value), so a state stack's contents reveal which ticks' frames it was built from."""
+class ScriptedEnv(gym.Env):
+    def __init__(self, base, done_at, truncate=False, life_loss_at=None):
+        self.base = base
+        self.done_at = done_at
+        self.truncate = truncate
+        self.life_loss_at = life_loss_at
+        self.observation_space = gym.spaces.Box(0, 255, shape=(1,), dtype=np.uint8)
+        self.action_space = gym.spaces.Discrete(2)
+        self.episode = -1
+        self.t = 0
+        self.actions = []
 
-    def __init__(self, num_envs, ticks):
-        self.num_envs = num_envs
-        self.ticks = iter(ticks)
-        self.tick_idx = 0
+    def reset(self, *, seed=None, options=None):
+        self.episode += 1
+        self.t = 0
+        return np.array([self.base + self.episode * 100], dtype=np.uint8), {"lives": 3}
+
+    def step(self, action):
+        self.actions.append((self.episode, self.t, int(action)))
+        self.t += 1
+        done = self.t == self.done_at and self.episode == 0
+        lives = 2 if self.life_loss_at is not None and self.t >= self.life_loss_at else 3
+        return (np.array([self.base + self.episode * 100 + self.t], dtype=np.uint8),
+                1.0, done and not self.truncate, done and self.truncate, {"lives": lives})
+
+
+class ScriptedPreprocessor:
+    def preprocess_frame(self, observation):
+        return torch.full((1, 84, 84), int(observation[0]), dtype=torch.uint8)
 
     def initialize_state_vec(self, vec_env):
-        state = torch.zeros(self.num_envs, 4, 84, 84, dtype=torch.uint8)
-        return state, {"lives": np.full(self.num_envs, 3)}
+        obs, info = vec_env.reset()
+        frames = torch.stack([self.preprocess_frame(frame) for frame in obs])
+        return frames.repeat(1, 4, 1, 1), info
 
     def step_with_skip_vec(self, vec_env, actions):
-        rewards, lives = next(self.ticks)
-        obs = np.zeros((self.num_envs, 210, 160, 3), dtype=np.uint8)
-        return obs, np.array(rewards, dtype=float), None, None, {"lives": np.array(lives)}
+        return vec_env.step(actions)
 
-    def new_state_vec(self, new_raw_obs, curr_states):
-        self.tick_idx += 1
-        marker = self.tick_idx * 10
-        new_frames = torch.full((self.num_envs, 84, 84), marker, dtype=torch.uint8)
-        new_states = torch.cat([curr_states[:, 1:], new_frames.unsqueeze(1)], dim=1)
-        return new_states, new_frames
+    def new_state_vec(self, observations, old_states):
+        frames = torch.stack([self.preprocess_frame(obs) for obs in observations])
+        return torch.cat([old_states[:, 1:], frames], dim=1), frames.squeeze(1)
 
 
-class FakeReplayMemory:
-    count = 0  # always below memory_warmup, so update/target/loss-averaging never fire
+class RecordingReplay:
+    count = 0
 
-    def add_frames(self, *args, **kwargs):
-        pass
+    def __init__(self):
+        self.transitions = []
+
+    def add_frames(self, frames, actions, rewards, terminals, boundaries):
+        self.transitions.append((frames.copy(), np.array(actions).copy(), rewards.copy(),
+                                 terminals.copy(), boundaries.copy()))
+        self.count += len(actions)
 
 
-class FakeExploreVsExploit:
-    """Records the acting state it's called with, on every tick."""
-
-    def __init__(self, num_envs):
-        self.num_envs = num_envs
+class RecordingPolicy:
+    def __init__(self):
         self.seen_states = []
 
-    def __call__(self, curr_states, frame_num):
-        self.seen_states.append(curr_states.clone())
-        return np.zeros(self.num_envs, dtype=int)
+    def __call__(self, states, frame_num):
+        self.seen_states.append(states.clone())
+        return (states[:, -1, 0, 0] >= 100).int().numpy()
 
     def get_epsilon(self, frame_num):
         return 0.5
 
 
-def _make_agent(num_envs, ticks, max_train_frames):
+def _make_agent(*specs, ticks=2):
     agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
-    agent.num_envs = num_envs
-    agent.Preprocessor = FakePreprocessor(num_envs, ticks)
-    agent.vec_env = None
-    agent.ReplayMemory = FakeReplayMemory()
-    agent.ExploreVsExploit = FakeExploreVsExploit(num_envs)
-    agent.metrics_dir = None
-    agent.checkpoint_path = None
-    agent.memory_warmup = 10 ** 9
-    agent.update_main_freq = 10 ** 9
-    agent.update_target_freq = 10 ** 9
-    agent.average_loss_freq = 10 ** 9
-    agent.log_freq = 10 ** 9
+    agent.num_envs = len(specs)
+    agent.vec_env = SyncVectorEnv([
+        lambda base=b, done_at=d, truncate=t, life_loss_at=l:
+            ActionRepeatEnv(ScriptedEnv(base, done_at, truncate, life_loss_at))
+        for b, d, t, l in specs
+    ])
+    agent.Preprocessor = ScriptedPreprocessor()
+    agent.ReplayMemory = RecordingReplay()
+    agent.ExploreVsExploit = RecordingPolicy()
+    agent.metrics_dir = agent.checkpoint_path = None
+    agent.memory_warmup = 1_000_000
+    agent.update_main_freq = agent.update_target_freq = 1_000_000
+    agent.average_loss_freq = agent.log_freq = 1_000_000
     agent.start_frame_num = 0
-    agent.max_train_frames = max_train_frames
+    agent.max_train_frames = ticks * agent.num_envs
     agent.rewards = []
     agent.losses = []
     agent.frame_nums = []
@@ -86,55 +104,32 @@ def _make_agent(num_envs, ticks, max_train_frames):
     return agent
 
 
-def test_acting_state_reseeded_the_tick_after_an_episode_ends():
-    # tick1: alive; tick2: episode ends (lives hit 0); tick3: new episode (auto-reset);
-    # tick4: still alive, so its acting-state input is tick3's already-overridden state.
-    ticks = [
-        ([0.0], [3]),
-        ([0.0], [0]),
-        ([0.0], [3]),
-        ([0.0], [3]),
-    ]
-    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=4)
+@pytest.mark.parametrize("truncate", [False, True])
+@pytest.mark.parametrize("num_envs", [1, 2])
+def test_reset_precedes_next_action_without_extra_transition(truncate, num_envs):
+    specs = [(0, 2, truncate, None)]
+    if num_envs == 2:
+        specs.append((20, 100, False, 5))
+    agent = _make_agent(*specs)
+    try:
+        agent.train()
 
-    agent.train()
+        assert agent.start_frame_num == agent.ReplayMemory.count == 2 * num_envs
+        assert len(agent.ReplayMemory.transitions) == 2
+        first, second = agent.ReplayMemory.transitions
+        assert first[0][0, 0, 0] == 2  # final observation, including on truncation
+        assert first[3][0] == (not truncate)
+        assert first[4][0]
+        assert second[1][0] == 1  # first action in the new game uses its reset state
+        assert agent.ExploreVsExploit.seen_states[1][0, :, 0, 0].tolist() == [100] * 4
+        assert agent.vec_env.envs[0].env.actions[:3] == [(0, 0, 0), (0, 1, 0), (1, 0, 1)]
+        assert agent.rewards[0] == 2.0
 
-    seen = agent.ExploreVsExploit.seen_states
-    assert len(seen) == 4
-    # tick3's acting-state input still carries tick1/tick2's stale frames (10, 20) -
-    # the override only takes effect starting the tick *after* just_reset is set.
-    expected_tick3 = torch.stack([
-        torch.zeros(84, 84, dtype=torch.uint8),
-        torch.zeros(84, 84, dtype=torch.uint8),
-        torch.full((84, 84), 10, dtype=torch.uint8),
-        torch.full((84, 84), 20, dtype=torch.uint8),
-    ])
-    assert torch.equal(seen[2][0], expected_tick3)
-    # tick4's acting-state input is tick3's output, reseeded to 4 copies of tick3's new
-    # frame (marker 30) instead of a shift-append that would carry the marker-20 frame
-    # from the episode that just ended.
-    expected_tick4 = torch.full((1, 4, 84, 84), 30, dtype=torch.uint8)
-    assert torch.equal(seen[3], expected_tick4)
-
-
-def test_reset_override_is_independent_per_env():
-    # env 0's episode ends on tick 1; env 1 stays alive throughout. The override for env
-    # 0 is computed during tick 2 (the tick after just_reset is set), so it's only
-    # observable as tick 3's acting-state input.
-    ticks = [
-        (np.array([0.0, 0.0]), np.array([0, 3])),
-        (np.array([0.0, 0.0]), np.array([3, 3])),
-        (np.array([0.0, 0.0]), np.array([3, 3])),
-    ]
-    # frame_num advances by num_envs=2 per tick (1, 3, 5, ...); budget 6 covers exactly 3 ticks.
-    agent = _make_agent(num_envs=2, ticks=ticks, max_train_frames=6)
-
-    agent.train()
-
-    seen = agent.ExploreVsExploit.seen_states
-    tick3_input = seen[2]
-    # env 0 reseeded to 4 copies of tick 2's frame (marker 20), env 1 shift-appended
-    # normally (still carrying tick1's marker-10 frame at position 2).
-    assert torch.equal(tick3_input[0], torch.full((4, 84, 84), 20, dtype=torch.uint8))
-    assert torch.equal(tick3_input[1, 2], torch.full((84, 84), 10, dtype=torch.uint8))
-    assert torch.equal(tick3_input[1, 3], torch.full((84, 84), 20, dtype=torch.uint8))
+        if num_envs == 2:
+            assert not first[3][1] and not first[4][1]
+            assert second[3][1] and second[4][1]  # life loss, without a game reset
+            assert second[1][1] == 0
+            assert agent.vec_env.envs[1].env.episode == 0
+            assert agent.ExploreVsExploit.seen_states[1][1, -1, 0, 0] == 24
+    finally:
+        agent.vec_env.close()
