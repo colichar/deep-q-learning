@@ -33,7 +33,7 @@ def test_training_runs_end_to_end(double_dqn):
 
         assert len(agent.averaged_losses) > 0
         assert np.isfinite(agent.averaged_losses).all()
-        assert len(agent.rewards) > 0
+        assert np.isfinite(agent.rewards).all()
     finally:
         agent.close()
 
@@ -76,7 +76,8 @@ def test_vectorized_training_checkpoint_resume(tmp_path):
         assert len(resumed.averaged_losses) > len(agent.averaged_losses)
         assert np.isfinite(resumed.averaged_losses).all()
         assert resumed.frame_nums[-1] > agent.frame_nums[-1]
-        assert len(resumed.rewards) > len(agent.rewards)
+        assert resumed.rewards[:len(agent.rewards)] == agent.rewards
+        assert np.isfinite(resumed.rewards).all()
         for saved, continued in zip(agent.ReplayMemory.buffers, resumed.ReplayMemory.buffers):
             assert continued.count > saved.count
     finally:
@@ -124,7 +125,7 @@ def test_training_writes_metrics_csvs_incrementally(tmp_path):
 
     episode_rows = episodes_csv.read_text().splitlines()
     assert episode_rows[0] == "frame_num,episode_num,episode_reward,epsilon,wall_clock_elapsed_seconds"
-    assert len(episode_rows) > 1
+    assert len(episode_rows) == len(agent.rewards) + 1
 
     loss_rows = losses_csv.read_text().splitlines()
     assert loss_rows[0] == "frame_num,avg_loss"
@@ -154,7 +155,7 @@ def test_train_writes_periodic_checkpoint_resumable(tmp_path):
     assert resumed.start_frame_num > mid_run_frame
 
     resumed.train()
-    assert len(resumed.rewards) > 0
+    assert np.isfinite(resumed.rewards).all()
 
 
 def test_train_gates_updates_on_replay_memory_content_not_frame_num():
@@ -202,7 +203,8 @@ def test_agent_resumes_from_saved_checkpoint(tmp_path, double_dqn):
             assert len(resumed.averaged_losses) > losses_before
             assert np.isfinite(resumed.averaged_losses).all()
             assert resumed.frame_nums[-1] > last_frame_before
-            assert len(resumed.rewards) > rewards_before
+            assert len(resumed.rewards) >= rewards_before
+            assert np.isfinite(resumed.rewards).all()
         finally:
             resumed.close()
     finally:

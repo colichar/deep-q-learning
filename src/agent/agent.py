@@ -254,10 +254,6 @@ class SpaceInvaderAgent:
             curr_states, info = self.Preprocessor.initialize_state_vec(self.vec_env)
             prev_lives = array(info["lives"])
             episode_rewards = np_zeros(self.num_envs)
-            # Tracks whether each env's running episode_rewards was just flushed this tick,
-            # so the leftover-flush below doesn't double-record an env that happened to finish
-            # on the very last tick processed.
-            flushed_this_tick = np.zeros(self.num_envs, dtype=bool)
             reset_pending = np.zeros(self.num_envs, dtype=bool)
 
             while frame_num <= budget_end:
@@ -340,7 +336,6 @@ class SpaceInvaderAgent:
                 frame_num += self.num_envs
 
                 # Complete games independently of the remaining lives reported by ALE.
-                flushed_this_tick[:] = False
                 finished_envs = np.flatnonzero(done)
                 if len(finished_envs) > 0:
                     epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
@@ -354,26 +349,8 @@ class SpaceInvaderAgent:
                             )
                         self.rewards.append(episode_rewards[env_idx])
                         episode_rewards[env_idx] = 0
-                        flushed_this_tick[env_idx] = True
 
                 reset_pending = done
-
-            # Matches the pre-vectorization single-env loop, which always recorded
-            # episode_reward once the frame budget ran out, even mid-episode: flush any
-            # env's still-in-progress episode now, skipping envs already flushed above on
-            # this final tick to avoid double-recording them.
-            leftover_envs = np.nonzero(~flushed_this_tick)[0]
-            if len(leftover_envs) > 0:
-                epsilon = self.ExploreVsExploit.get_epsilon(frame_num)
-                elapsed = self.cumulative_wall_clock_seconds + (time.time() - session_start)
-                for env_idx in leftover_envs:
-                    episode_num += 1
-                    if episode_csv_path:
-                        self._append_csv_row(
-                            episode_csv_path,
-                            [frame_num, episode_num, episode_rewards[env_idx], epsilon, elapsed]
-                        )
-                    self.rewards.append(episode_rewards[env_idx])
 
         self.cumulative_wall_clock_seconds += time.time() - session_start
 

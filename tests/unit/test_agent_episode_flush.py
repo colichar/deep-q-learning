@@ -1,24 +1,17 @@
-"""
-Unit tests for SpaceInvaderAgent.train()'s end-of-run episode bookkeeping (issue #29).
+"""Only completed games contribute to episode statistics (issue #48)."""
+import csv
 
-The pre-vectorization single-env loop always recorded the current episode_reward once the
-frame budget ran out, even mid-episode (an inner `while alive:` loop broken by the frame
-budget, not by the episode actually ending, still fell through to the unconditional
-`self.rewards.append(episode_reward)` afterwards) - the vectorized rewrite has to preserve
-that for num_envs=1, and avoid double-recording an env whose episode happens to end on the
-very last tick processed.
-"""
 import numpy as np
+import pytest
 import torch
 
 from src.agent.agent import SpaceInvaderAgent
 
 
 class FakePreprocessor:
-    """Feeds a prescripted (reward, lives) sequence per env, one tick at a time."""
+    """Feeds prescripted rewards, lives, and truncations per env."""
 
     def __init__(self, num_envs, ticks):
-        # ticks: list of (rewards, lives) pairs, each an array of length num_envs.
         self.num_envs = num_envs
         self.ticks = iter(ticks)
 
@@ -27,9 +20,10 @@ class FakePreprocessor:
         return state, {"lives": np.full(self.num_envs, 3)}
 
     def step_with_skip_vec(self, vec_env, actions):
-        rewards, lives = next(self.ticks)
+        rewards, lives, truncated = next(self.ticks)
         obs = np.zeros((self.num_envs, 210, 160, 3), dtype=np.uint8)
-        return obs, np.array(rewards, dtype=float), np.array(lives) == 0, np.zeros(self.num_envs, dtype=bool), {"lives": np.array(lives)}
+        return (obs, np.array(rewards, dtype=float), np.array(lives) == 0,
+                np.array(truncated, dtype=bool), {"lives": np.array(lives)})
 
     def new_state_vec(self, new_raw_obs, curr_states):
         return curr_states, torch.zeros(self.num_envs, 84, 84, dtype=torch.uint8)
@@ -53,14 +47,14 @@ class FakeExploreVsExploit:
         return 0.5
 
 
-def _make_agent(num_envs, ticks, max_train_frames):
+def _make_agent(num_envs, ticks, max_train_frames, metrics_dir=None):
     agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
     agent.num_envs = num_envs
     agent.Preprocessor = FakePreprocessor(num_envs, ticks)
     agent.vec_env = None
     agent.ReplayMemory = FakeReplayMemory()
     agent.ExploreVsExploit = FakeExploreVsExploit(num_envs)
-    agent.metrics_dir = None
+    agent.metrics_dir = str(metrics_dir) if metrics_dir else None
     agent.checkpoint_path = None
     agent.memory_warmup = 10 ** 9
     agent.update_main_freq = 10 ** 9
@@ -79,34 +73,66 @@ def _make_agent(num_envs, ticks, max_train_frames):
     return agent
 
 
-def test_leftover_episode_flushed_once_when_budget_runs_out_mid_episode():
-    # 3 ticks, lives stay at 3 throughout - the episode never naturally ends.
-    ticks = [([1.0], [3]), ([1.0], [3]), ([1.0], [3])]
-    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=3)
+def _episode_rows(metrics_dir):
+    with (metrics_dir / "episodes.csv").open(newline="") as file:
+        return list(csv.DictReader(file))
+
+
+def test_partial_episode_is_not_recorded_when_budget_runs_out(tmp_path):
+    ticks = [([1.0], [3], [False])] * 3
+    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=3, metrics_dir=tmp_path)
+
+    agent.train()
+
+    assert agent.rewards == []
+    assert _episode_rows(tmp_path) == []
+
+
+@pytest.mark.parametrize("final_lives, final_truncated", [(0, False), (3, True)])
+def test_completion_on_final_tick_is_recorded_once(tmp_path, final_lives, final_truncated):
+    ticks = [([1.0], [3], [False]), ([1.0], [3], [False]),
+             ([1.0], [final_lives], [final_truncated])]
+    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=3, metrics_dir=tmp_path)
 
     agent.train()
 
     assert agent.rewards == [3.0]
+    rows = _episode_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["episode_num"] == "1"
+    assert float(rows[0]["episode_reward"]) == 3.0
 
 
-def test_natural_completion_on_the_final_tick_is_not_double_recorded():
-    # 3 ticks, lives hit 0 exactly on the last tick processed.
-    ticks = [([1.0], [3]), ([1.0], [3]), ([1.0], [0])]
-    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=3)
-
-    agent.train()
-
-    assert agent.rewards == [3.0]
-
-
-def test_leftover_flush_is_independent_per_env():
-    # env 0 finishes naturally on the last tick; env 1 never finishes.
+@pytest.mark.parametrize("final_lives, final_truncated", [(0, False), (3, True)])
+def test_only_finished_env_is_recorded_on_final_vector_tick(tmp_path, final_lives, final_truncated):
     ticks = [
-        (np.array([1.0, 2.0]), np.array([3, 3])),
-        (np.array([1.0, 2.0]), np.array([0, 3])),
+        ([1.0, 2.0], [3, 3], [False, False]),
+        ([1.0, 2.0], [final_lives, 3], [final_truncated, False]),
     ]
-    agent = _make_agent(num_envs=2, ticks=ticks, max_train_frames=4)
+    agent = _make_agent(num_envs=2, ticks=ticks, max_train_frames=4, metrics_dir=tmp_path)
 
     agent.train()
 
-    assert sorted(agent.rewards) == [2.0, 4.0]
+    assert agent.rewards == [2.0]
+    rows = _episode_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["episode_num"] == "1"
+    assert float(rows[0]["episode_reward"]) == 2.0
+
+
+def test_checkpoint_during_ongoing_game_does_not_record_episode(tmp_path):
+    ticks = [([1.0], [3], [False])] * 2
+    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=2, metrics_dir=tmp_path)
+    agent.checkpoint_path = str(tmp_path / "checkpoint")
+    agent.checkpoint_freq = agent.replay_checkpoint_freq = 1
+    saved_rewards = []
+
+    def save(path, write_replay_memory):
+        saved_rewards.append((list(agent.rewards), _episode_rows(tmp_path)))
+
+    agent.save = save
+    agent.train()
+
+    assert saved_rewards == [([], []), ([], [])]
+    assert agent.rewards == []
+    assert _episode_rows(tmp_path) == []
