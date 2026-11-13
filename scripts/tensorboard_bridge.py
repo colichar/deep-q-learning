@@ -42,28 +42,28 @@ def read_rows(path):
         return list(csv.DictReader(file))
 
 
-def sync_losses(path, writer, last_frame):
-    new_last = last_frame
+def sync_losses(path, writer, last_transition):
+    new_last = last_transition
     for row in read_rows(path):
-        frame_num = int(row["frame_num"])
-        if frame_num <= last_frame:
+        transition_num = int(row["transition_num"])
+        if transition_num <= last_transition:
             continue
-        writer.add_scalar("loss/avg_loss", float(row["avg_loss"]), frame_num)
-        new_last = frame_num
+        writer.add_scalar("loss/avg_loss", float(row["avg_loss"]), transition_num)
+        new_last = transition_num
     return new_last
 
 
-def sync_rewards(path, writer, last_frame, window):
+def sync_rewards(path, writer, last_transition, window):
     rows = read_rows(path)
-    new_last = last_frame
+    new_last = last_transition
     for i, row in enumerate(rows):
-        frame_num = int(row["frame_num"])
-        if frame_num <= last_frame:
+        transition_num = int(row["transition_num"])
+        if transition_num <= last_transition:
             continue
         trailing = rows[max(0, i - window + 1):i + 1]
         avg_reward = sum(float(r["episode_reward"]) for r in trailing) / len(trailing)
-        writer.add_scalar("reward/avg_episode_reward", avg_reward, frame_num)
-        new_last = frame_num
+        writer.add_scalar("reward/avg_episode_reward", avg_reward, transition_num)
+        new_last = transition_num
     return new_last
 
 
@@ -78,12 +78,12 @@ def main():
 
     losses_path = os.path.join(args.metrics_dir, "losses.csv")
     episodes_path = os.path.join(args.metrics_dir, "episodes.csv")
-    last_loss_frame = -1
-    last_reward_frame = -1
+    last_loss_transition = -1
+    last_reward_transition = -1
 
     while True:
-        last_loss_frame = sync_losses(losses_path, writer, last_loss_frame)
-        last_reward_frame = sync_rewards(episodes_path, writer, last_reward_frame, args.reward_avg_window)
+        last_loss_transition = sync_losses(losses_path, writer, last_loss_transition)
+        last_reward_transition = sync_rewards(episodes_path, writer, last_reward_transition, args.reward_avg_window)
         writer.flush()
 
         if args.once:

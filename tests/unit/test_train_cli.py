@@ -26,3 +26,13 @@ def test_main_passes_algorithm_to_agent(double_dqn, monkeypatch, capsys):
     agent_class.return_value.close.assert_called_once_with()
     algorithm = "Double DQN" if double_dqn else "DQN"
     assert f"Using algorithm: {algorithm}\n" in capsys.readouterr().out
+
+
+def test_max_train_transitions_flag_is_passed_to_agent(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["train.py", "--max-train-transitions", "17"])
+    agent_class = MagicMock()
+    monkeypatch.setattr(train, "SpaceInvaderAgent", agent_class)
+
+    train.main()
+
+    assert agent_class.call_args.kwargs["max_train_transitions"] == 17

@@ -40,14 +40,14 @@ class FakeExploreVsExploit:
     def __init__(self, num_envs):
         self.num_envs = num_envs
 
-    def __call__(self, curr_states, frame_num):
+    def __call__(self, curr_states, transition_num):
         return np.zeros(self.num_envs, dtype=int)
 
-    def get_epsilon(self, frame_num):
+    def get_epsilon(self, transition_num):
         return 0.5
 
 
-def _make_agent(num_envs, ticks, max_train_frames, metrics_dir=None):
+def _make_agent(num_envs, ticks, max_train_transitions, metrics_dir=None):
     agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
     agent.num_envs = num_envs
     agent.Preprocessor = FakePreprocessor(num_envs, ticks)
@@ -61,11 +61,11 @@ def _make_agent(num_envs, ticks, max_train_frames, metrics_dir=None):
     agent.update_target_freq = 10 ** 9
     agent.average_loss_freq = 10 ** 9
     agent.log_freq = 10 ** 9
-    agent.start_frame_num = 0
-    agent.max_train_frames = max_train_frames
+    agent.completed_transitions = 0
+    agent.max_train_transitions = max_train_transitions
     agent.rewards = []
     agent.losses = []
-    agent.frame_nums = []
+    agent.transition_nums = []
     agent.averaged_losses = []
     agent._logged_reward_idx = 0
     agent.cumulative_wall_clock_seconds = 0.0
@@ -80,7 +80,7 @@ def _episode_rows(metrics_dir):
 
 def test_partial_episode_is_not_recorded_when_budget_runs_out(tmp_path):
     ticks = [([1.0], [3], [False])] * 3
-    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=3, metrics_dir=tmp_path)
+    agent = _make_agent(num_envs=1, ticks=ticks, max_train_transitions=3, metrics_dir=tmp_path)
 
     agent.train()
 
@@ -92,7 +92,7 @@ def test_partial_episode_is_not_recorded_when_budget_runs_out(tmp_path):
 def test_completion_on_final_tick_is_recorded_once(tmp_path, final_lives, final_truncated):
     ticks = [([1.0], [3], [False]), ([1.0], [3], [False]),
              ([1.0], [final_lives], [final_truncated])]
-    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=3, metrics_dir=tmp_path)
+    agent = _make_agent(num_envs=1, ticks=ticks, max_train_transitions=3, metrics_dir=tmp_path)
 
     agent.train()
 
@@ -109,7 +109,7 @@ def test_only_finished_env_is_recorded_on_final_vector_tick(tmp_path, final_live
         ([1.0, 2.0], [3, 3], [False, False]),
         ([1.0, 2.0], [final_lives, 3], [final_truncated, False]),
     ]
-    agent = _make_agent(num_envs=2, ticks=ticks, max_train_frames=4, metrics_dir=tmp_path)
+    agent = _make_agent(num_envs=2, ticks=ticks, max_train_transitions=4, metrics_dir=tmp_path)
 
     agent.train()
 
@@ -122,7 +122,7 @@ def test_only_finished_env_is_recorded_on_final_vector_tick(tmp_path, final_live
 
 def test_checkpoint_during_ongoing_game_does_not_record_episode(tmp_path):
     ticks = [([1.0], [3], [False])] * 2
-    agent = _make_agent(num_envs=1, ticks=ticks, max_train_frames=2, metrics_dir=tmp_path)
+    agent = _make_agent(num_envs=1, ticks=ticks, max_train_transitions=2, metrics_dir=tmp_path)
     agent.checkpoint_path = str(tmp_path / "checkpoint")
     agent.checkpoint_freq = agent.replay_checkpoint_freq = 1
     saved_rewards = []

@@ -19,12 +19,12 @@ def _agent(num_envs, optimizer="adam"):
     agent.TargetModel = CNNModelPY(n_actions=6, device=torch.device("cpu"))
     # Equal sub-buffer capacities reproduce the partial-load bug rather than a shape error.
     agent.ReplayMemory = VectorizedReplayMemory(num_envs, capacity=16 * num_envs, batch_size=4)
-    agent.frame_nums = []
+    agent.transition_nums = []
     agent.averaged_losses = []
     agent.losses = []
     agent.rewards = []
     agent.cumulative_wall_clock_seconds = 0.0
-    agent.start_frame_num = 0
+    agent.completed_transitions = 0
     agent._replay_restored_unmarked = False
     return agent
 
@@ -36,8 +36,8 @@ def _record_training(agent):
         np.ones(agent.num_envs),
         np.zeros(agent.num_envs, dtype=bool),
     )
-    agent.frame_nums = [100]
-    agent.start_frame_num = 103
+    agent.transition_nums = [100]
+    agent.completed_transitions = 103
     agent.averaged_losses = [0.5]
     agent.rewards = [10.0]
 
@@ -54,8 +54,8 @@ def test_save_before_training_is_resumable(tmp_path, write_replay_memory):
     assert (path / "replay_memory").exists() is write_replay_memory
     resumed = _agent(2)
     resumed.load(str(path))
-    assert resumed.start_frame_num == 0
-    assert resumed.losses == resumed.frame_nums == resumed.averaged_losses == resumed.rewards == []
+    assert resumed.completed_transitions == 0
+    assert resumed.losses == resumed.transition_nums == resumed.averaged_losses == resumed.rewards == []
 
 
 @pytest.mark.parametrize("num_envs", [1, 2])
@@ -78,7 +78,7 @@ def test_matching_num_envs_restores_checkpoint(tmp_path, num_envs, write_replay_
     resumed = _agent(num_envs, optimizer)
     resumed.load(str(tmp_path))
 
-    assert resumed.start_frame_num == 103
+    assert resumed.completed_transitions == 103
     assert resumed.averaged_losses == agent.averaged_losses
     assert resumed.rewards == agent.rewards
     assert resumed.ReplayMemory.count == (num_envs if write_replay_memory else 0)
@@ -172,7 +172,7 @@ def _training_agent(num_envs, memory_warmup, average_loss_freq):
     agent.update_target_freq = 100
     agent.average_loss_freq = average_loss_freq
     agent.log_freq = 100
-    agent.max_train_frames = 8
+    agent.max_train_transitions = 8
     return agent
 
 
@@ -191,7 +191,7 @@ def test_exact_progress_through_periodic_save_repeat_and_resume(
 
     collected = 9 if num_envs == 3 else 8
     checkpoint_count = 6 if num_envs == 3 else 5
-    assert agent.start_frame_num == agent.ReplayMemory.count == collected
+    assert agent.completed_transitions == agent.ReplayMemory.count == collected
     assert agent.Preprocessor.initialize_state_vec.call_count == 1
     with open(tmp_path / f"periodic/history/train_history_{checkpoint_count}", "rb") as file:
         periodic_history = pickle.load(file)
@@ -200,31 +200,31 @@ def test_exact_progress_through_periodic_save_repeat_and_resume(
 
     resumed = _training_agent(num_envs, memory_warmup, average_loss_freq)
     resumed.load(agent.checkpoint_path)
-    assert resumed.start_frame_num == checkpoint_count
+    assert resumed.completed_transitions == checkpoint_count
     assert resumed.losses == periodic_history["losses"]
-    assert resumed.frame_nums == periodic_history["frame_nums"]
+    assert resumed.transition_nums == periodic_history["transition_nums"]
     resumed.train()
     assert resumed.ExploreVsExploit.call_args_list[0].args[1] == checkpoint_count + 1
-    assert resumed.start_frame_num == checkpoint_count + collected
+    assert resumed.completed_transitions == checkpoint_count + collected
 
     agent.train()
-    assert agent.start_frame_num == agent.ReplayMemory.count == 2 * collected
+    assert agent.completed_transitions == agent.ReplayMemory.count == 2 * collected
     assert [call.args[1] for call in agent.ExploreVsExploit.call_args_list] == list(
         range(1, 2 * collected + 1, num_envs)
     )
     if memory_warmup:
-        assert agent.losses == agent.averaged_losses == agent.frame_nums == []
+        assert agent.losses == agent.averaged_losses == agent.transition_nums == []
     elif average_loss_freq == 100:
         assert agent.losses
-        assert agent.frame_nums == []
+        assert agent.transition_nums == []
     else:
-        assert agent.frame_nums[-1] < agent.start_frame_num
+        assert agent.transition_nums[-1] < agent.completed_transitions
 
     agent.save(str(tmp_path / "final"))
     resumed.load(str(tmp_path / "final"))
-    assert resumed.start_frame_num == 2 * collected
+    assert resumed.completed_transitions == 2 * collected
     assert resumed.losses == agent.losses
-    assert resumed.frame_nums == agent.frame_nums
+    assert resumed.transition_nums == agent.transition_nums
     assert resumed.averaged_losses == agent.averaged_losses
     assert resumed.rewards == agent.rewards
     assert resumed.cumulative_wall_clock_seconds == agent.cumulative_wall_clock_seconds
@@ -237,7 +237,7 @@ def test_legacy_history_rejected_before_loading_models_or_replay(tmp_path, has_h
     history_dir.mkdir()
     if has_history:
         with open(history_dir / "train_history_100", "wb") as file:
-            pickle.dump({"losses": [], "averaged_losses": [0.5], "frame_nums": [100], "rewards": []}, file)
+            pickle.dump({"losses": [], "averaged_losses": [0.5], "transition_nums": [100], "rewards": []}, file)
     agent = _agent(1)
     agent.load_model = Mock()
     agent.load_replay_memory = Mock()
@@ -248,7 +248,7 @@ def test_legacy_history_rejected_before_loading_models_or_replay(tmp_path, has_h
 
     agent.load_model.assert_not_called()
     agent.load_replay_memory.assert_not_called()
-    assert agent.start_frame_num == 0
+    assert agent.completed_transitions == 0
 
 
 def test_resume_marks_restart_boundary_once_per_load(tmp_path):

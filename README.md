@@ -67,20 +67,20 @@ to see this same list from the CLI.
 | `--double-dqn` | `False` | Enable Double DQN. Pass again when resuming Double DQN training. |
 | `--optimizer` | `rmsprop` | `adam` or `rmsprop`. `rmsprop` uses the paper's *centered* RMSProp (`alpha=0.95`, `eps=0.01`, `centered=True`). Must match the checkpoint's optimizer when using `--resume-from` — Adam's and RMSProp's saved optimizer state aren't interchangeable. |
 | `--memory-size` | `1000000` | Number of frames the replay memory ring buffer holds. Must match the checkpoint's size when using `--resume-from` — validated against the saved buffer's shape and the load fails otherwise. |
-| `--memory-warmup` | `50000` | Number of frames to collect before training/logging starts. |
+| `--memory-warmup` | `50000` | Number of replay frames to collect before training/logging starts. |
 | `--batch-size` | `32` | Number of transitions sampled from replay memory per update step. |
-| `--max-train-frames` | `60000` | Total number of frames to train for. When resuming, this is the number of *additional* frames for this session, not the new total — a run resumed at frame 2,000,000 with `--max-train-frames 2000000` trains up to frame 4,000,000, not back to 2,000,000. |
-| `--update-main-freq` | `4` | Train the main model every N frames. |
-| `--update-target-freq` | `10000` | Sync the target model's weights from the main model every N frames. |
-| `--log-freq` | `10000` | Print a training progress line every N frames. |
-| `--average-loss-freq` | `400` | Average and record the loss over the last N frames. |
+| `--max-train-transitions` | `60000` | Additional collected transitions to train for in this session. A run resumed at transition 2,000,000 with `--max-train-transitions 2000000` targets transition 4,000,000. |
+| `--update-main-freq` | `4` | Run one sequential optimizer update per N collected transitions after warmup. A vector tick may trigger multiple updates. |
+| `--update-target-freq` | `10000` | Sync the target model's weights from the main model every N collected transitions. |
+| `--log-freq` | `10000` | Print a training progress line every N collected transitions. |
+| `--average-loss-freq` | `400` | Average and record losses every N collected transitions. |
 | `--discount` | `0.99` | Discount factor (gamma) used in the Q-learning target. |
 | `--num-envs` | `1` | Number of parallel ALE sub-envs to train against. `1` uses a `SyncVectorEnv` (single-env behavior); `>1` uses a subprocess-based `AsyncVectorEnv`. `--memory-size` is split evenly across sub-envs, not multiplied by N. Must match the checkpoint's saved `num_envs` when resuming. |
 | `--resume-from` | `None` | Path to a checkpoint directory to resume training from. Requires `checkpoint_metadata.json` with `num_envs` and training history with `completed_transitions`. |
 | `--save-path` | `scripts/output` | Path to save the checkpoint to. Holds replay memory (`replay_memory/`), model + optimizer weights (`model/`), and training history (`history/`), plus `checkpoint_metadata.json`. |
-| `--metrics-dir` | `scripts/output/metrics` | Directory to write `episodes.csv`/`losses.csv` to incrementally during training. |
-| `--checkpoint-freq` | `25000` | Save a checkpoint to `--save-path` every N frames during training. |
-| `--replay-checkpoint-freq` | `None` (defaults to `--checkpoint-freq`) | Save the replay memory buffer (the expensive part of a checkpoint) every N frames, independently of `--checkpoint-freq`. Must be a multiple of `--checkpoint-freq`. Set higher than `--checkpoint-freq` to checkpoint model/history often while writing the multi-GB replay buffer less often. |
+| `--metrics-dir` | `scripts/output/metrics` | Directory to write `episodes.csv`/`losses.csv` incrementally during training. Both CSVs use a `transition_num` column. |
+| `--checkpoint-freq` | `25000` | Save a checkpoint to `--save-path` every N collected transitions. |
+| `--replay-checkpoint-freq` | `None` (defaults to `--checkpoint-freq`) | Save the replay memory buffer (the expensive part of a checkpoint) every N collected transitions, independently of `--checkpoint-freq`. Must be a multiple of `--checkpoint-freq`. Set higher than `--checkpoint-freq` to checkpoint model/history often while writing the multi-GB replay buffer less often. |
 
 ### Double DQN
 

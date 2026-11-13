@@ -2,7 +2,7 @@
 CLI entry point for kicking off a SpaceInvaderAgent training run.
 
 Usage:
-    uv run python scripts/train.py --max-train-frames 70000
+    uv run python scripts/train.py --max-train-transitions 70000
     uv run python scripts/train.py --resume-from scripts/output --save-path scripts/output
 """
 import argparse
@@ -34,19 +34,20 @@ def parse_args():
     parser.add_argument("--memory-size", type=int, default=10 ** 6,
                          help="Number of frames the replay memory ring buffer holds.")
     parser.add_argument("--memory-warmup", type=int, default=50_000,
-                         help="Number of frames to collect before training/logging starts.")
+                         help="Number of replay frames to collect before training/logging starts.")
     parser.add_argument("--batch-size", type=int, default=32,
                          help="Number of transitions sampled from replay memory per update step.")
-    parser.add_argument("--max-train-frames", type=int, default=60_000,
-                         help="Total number of frames to train for.")
+    parser.add_argument("--max-train-transitions", type=int, default=60_000,
+                         help="Number of collected transitions to train for in this session. "
+                              "Vector ticks collect one transition per environment.")
     parser.add_argument("--update-main-freq", type=int, default=4,
-                         help="Train the main model every N frames.")
+                         help="Train the main model once per N collected transitions after warmup.")
     parser.add_argument("--update-target-freq", type=int, default=10_000,
-                         help="Sync the target model's weights from the main model every N frames.")
+                         help="Sync the target model every N collected transitions.")
     parser.add_argument("--log-freq", type=int, default=10_000,
-                         help="Print a training progress line every N frames.")
+                         help="Print a training progress line every N collected transitions.")
     parser.add_argument("--average-loss-freq", type=int, default=400,
-                         help="Average and record the loss over the last N frames.")
+                         help="Average and record losses every N collected transitions.")
     parser.add_argument("--discount", type=float, default=0.99,
                          help="Discount factor (gamma) used in the Q-learning target.")
     parser.add_argument("--num-envs", type=int, default=1,
@@ -62,15 +63,15 @@ def parse_args():
     parser.add_argument("--metrics-dir", type=str, default="scripts/output/metrics",
                          help="Directory to write episodes.csv/losses.csv to incrementally during training.")
     parser.add_argument("--checkpoint-freq", type=int, default=25_000,
-                         help="Save a checkpoint to --save-path every N frames during training.")
+                         help="Save a checkpoint to --save-path every N collected transitions.")
     parser.add_argument("--replay-checkpoint-freq", type=int, default=None,
                          help="Save the replay memory buffer (the expensive part of a checkpoint) "
-                              "every N frames, independently of --checkpoint-freq. Defaults to "
+                              "every N collected transitions, independently of --checkpoint-freq. Defaults to "
                               "--checkpoint-freq. Must be a multiple of --checkpoint-freq, since "
                               "it's only checked when a checkpoint fires. Set higher than "
                               "--checkpoint-freq to checkpoint model/history often while writing "
                               "the multi-GB replay buffer less often; a resumed run will then load "
-                              "a replay memory snapshot slightly behind the resumed frame count, "
+                              "a replay memory snapshot slightly behind the resumed transition count, "
                               "which is harmless.")
 
     return parser.parse_args()
@@ -84,7 +85,7 @@ def main():
         memory_size=args.memory_size,
         memory_warmup=args.memory_warmup,
         batch_size=args.batch_size,
-        max_train_frames=args.max_train_frames,
+        max_train_transitions=args.max_train_transitions,
         update_main_freq=args.update_main_freq,
         update_target_freq=args.update_target_freq,
         log_freq=args.log_freq,

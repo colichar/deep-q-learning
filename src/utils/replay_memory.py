@@ -206,7 +206,7 @@ class VectorizedReplayMemory:
     def count(self):
         # Sub-buffers all receive exactly one add_frames() write per training tick, so
         # they grow in lockstep - this aggregate tracks total frames across all envs,
-        # the same unit frame_num advances by per tick in the training loop.
+        # the same unit completed_transitions advances by per tick in the training loop.
         return sum(buffer.count for buffer in self.buffers)
 
     @staticmethod

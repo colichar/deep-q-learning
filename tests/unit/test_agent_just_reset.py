@@ -69,11 +69,11 @@ class RecordingPolicy:
     def __init__(self):
         self.seen_states = []
 
-    def __call__(self, states, frame_num):
+    def __call__(self, states, transition_num):
         self.seen_states.append(states.clone())
         return (states[:, -1, 0, 0] >= 100).int().numpy()
 
-    def get_epsilon(self, frame_num):
+    def get_epsilon(self, transition_num):
         return 0.5
 
 
@@ -92,11 +92,11 @@ def _make_agent(*specs, ticks=2):
     agent.memory_warmup = 1_000_000
     agent.update_main_freq = agent.update_target_freq = 1_000_000
     agent.average_loss_freq = agent.log_freq = 1_000_000
-    agent.start_frame_num = 0
-    agent.max_train_frames = ticks * agent.num_envs
+    agent.completed_transitions = 0
+    agent.max_train_transitions = ticks * agent.num_envs
     agent.rewards = []
     agent.losses = []
-    agent.frame_nums = []
+    agent.transition_nums = []
     agent.averaged_losses = []
     agent._logged_reward_idx = 0
     agent.cumulative_wall_clock_seconds = 0.0
@@ -114,7 +114,7 @@ def test_reset_precedes_next_action_without_extra_transition(truncate, num_envs)
     try:
         agent.train()
 
-        assert agent.start_frame_num == agent.ReplayMemory.count == 2 * num_envs
+        assert agent.completed_transitions == agent.ReplayMemory.count == 2 * num_envs
         assert len(agent.ReplayMemory.transitions) == 2
         first, second = agent.ReplayMemory.transitions
         assert first[0][0, 0, 0] == 2  # final observation, including on truncation
