@@ -99,6 +99,7 @@ def test_completion_on_final_tick_is_recorded_once(tmp_path, final_lives, final_
     assert agent.rewards == [3.0]
     rows = _episode_rows(tmp_path)
     assert len(rows) == 1
+    assert rows[0]["transition_num"] == "3"
     assert rows[0]["episode_num"] == "1"
     assert float(rows[0]["episode_reward"]) == 3.0
 
@@ -116,6 +117,7 @@ def test_only_finished_env_is_recorded_on_final_vector_tick(tmp_path, final_live
     assert agent.rewards == [2.0]
     rows = _episode_rows(tmp_path)
     assert len(rows) == 1
+    assert rows[0]["transition_num"] == "4"
     assert rows[0]["episode_num"] == "1"
     assert float(rows[0]["episode_reward"]) == 2.0
 

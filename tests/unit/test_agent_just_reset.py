@@ -1,5 +1,7 @@
 """Reset completed vector workers before choosing their next action."""
 
+from unittest.mock import Mock
+
 import gymnasium as gym
 import numpy as np
 import pytest
@@ -112,9 +114,13 @@ def test_reset_precedes_next_action_without_extra_transition(truncate, num_envs)
         specs.append((20, 100, False, 5))
     agent = _make_agent(*specs)
     try:
+        agent.memory_warmup = 0
+        agent.update_main_freq = 1
+        agent.update_step = Mock(return_value=torch.tensor(0.5))
         agent.train()
 
         assert agent.completed_transitions == agent.ReplayMemory.count == 2 * num_envs
+        assert agent.update_step.call_count == 2 * num_envs
         assert len(agent.ReplayMemory.transitions) == 2
         first, second = agent.ReplayMemory.transitions
         assert first[0][0, 0, 0] == 2  # final observation, including on truncation

@@ -25,3 +25,9 @@ def test_does_not_fire_when_no_multiple_is_covered_by_the_tick():
 
 def test_boolean_schedule_fires_once_even_when_multiple_thresholds_cross():
     assert SpaceInvaderAgent._freq_due(9, 8, 4) is True
+
+
+def test_optimizer_threshold_count_is_not_limited_to_one_per_tick():
+    assert SpaceInvaderAgent._thresholds_crossed(8, 16, 4) == 2
+    assert SpaceInvaderAgent._thresholds_crossed(9, 13, 4) == 1
+    assert SpaceInvaderAgent._thresholds_crossed(9, 11, 4) == 0

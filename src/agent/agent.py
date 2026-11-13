@@ -179,6 +179,11 @@ class SpaceInvaderAgent:
         """
         return (transition_num - 1) // freq != (transition_num + num_envs - 1) // freq
 
+    @staticmethod
+    def _thresholds_crossed(before, after, freq):
+        """Count frequency thresholds in (before, after]."""
+        return after // freq - before // freq
+
     def update_step(self):
         minibatch = self.ReplayMemory.get_batch()
 
@@ -279,18 +284,24 @@ class SpaceInvaderAgent:
                 new_states, new_frames = self.Preprocessor.new_state_vec(new_raw_obs, curr_states)
 
                 # store new frames, one per sub-env
+                replay_count_before = self.ReplayMemory.count
                 self.ReplayMemory.add_frames(
                     new_frames.numpy(), curr_actions, clipped_rewards,
                     life_lost | terminated, boundaries=life_lost | done,
                 )
+                completed_before = self.completed_transitions
                 self.completed_transitions += self.num_envs
 
-                # Gate on actual replay-memory content, not transition_num:
-                # This way new memory warmup when old replay memory not available
+                # Resuming without replay starts a new warmup regardless of progress.
                 warmed_up = self.ReplayMemory.count > self.memory_warmup
 
-                # perform weights update for main model
-                if self._freq_due(transition_num, self.num_envs, self.update_main_freq) and warmed_up:
+                # Replay may be empty after resume; only thresholds reached with enough
+                # newly collected experience are eligible, not missed earlier thresholds.
+                last_ineligible_transition = completed_before + max(0, self.memory_warmup - replay_count_before)
+                update_count = self._thresholds_crossed(
+                    last_ineligible_transition, self.completed_transitions, self.update_main_freq
+                ) if warmed_up else 0
+                for _ in range(update_count):
                     loss = self.update_step()
                     self.losses.append(loss.item())
 
@@ -301,7 +312,7 @@ class SpaceInvaderAgent:
 
                 # averaging past losses
                 if self._freq_due(transition_num, self.num_envs, self.average_loss_freq) and warmed_up:
-                    self.transition_nums.append(transition_num)
+                    self.transition_nums.append(self.completed_transitions)
                     self.averaged_losses.append(mean(self.losses))
 
                     self.losses = []
@@ -311,14 +322,14 @@ class SpaceInvaderAgent:
                         self._logged_reward_idx = len(self.rewards)
                         avg_reward = f"{mean(recent_rewards):.2f}" if recent_rewards else "n/a (no episode finished yet)"
                         print(
-                            f"Finished {transition_num} transitions. Loss: {self.averaged_losses[-1]:.6f}. "
+                            f"Finished {self.completed_transitions} transitions. Loss: {self.averaged_losses[-1]:.6f}. "
                             f"Avg episode reward: {avg_reward}"
                         )
                         if loss_csv_path:
-                            self._append_csv_row(loss_csv_path, [transition_num, self.averaged_losses[-1]])
+                            self._append_csv_row(loss_csv_path, [self.completed_transitions, self.averaged_losses[-1]])
 
                 if self.checkpoint_path and self._freq_due(transition_num, self.num_envs, self.checkpoint_freq):
-                    print(f"Checkpointing at transition {transition_num}...")
+                    print(f"Checkpointing at transition {self.completed_transitions}...")
                     write_replay = self._freq_due(transition_num, self.num_envs, self.replay_checkpoint_freq)
                     # Fold elapsed time in before saving, and reset session_start, so a crash
                     # right after this checkpoint doesn't lose this segment's wall-clock time
@@ -334,14 +345,14 @@ class SpaceInvaderAgent:
                 # Complete games independently of the remaining lives reported by ALE.
                 finished_envs = np.flatnonzero(done)
                 if len(finished_envs) > 0:
-                    epsilon = self.ExploreVsExploit.get_epsilon(transition_num)
+                    epsilon = self.ExploreVsExploit.get_epsilon(self.completed_transitions)
                     elapsed = self.cumulative_wall_clock_seconds + (time.time() - session_start)
                     for env_idx in finished_envs:
                         episode_num += 1
                         if episode_csv_path:
                             self._append_csv_row(
                                 episode_csv_path,
-                                [transition_num, episode_num, episode_rewards[env_idx], epsilon, elapsed]
+                                [self.completed_transitions, episode_num, episode_rewards[env_idx], epsilon, elapsed]
                             )
                         self.rewards.append(episode_rewards[env_idx])
                         episode_rewards[env_idx] = 0
