@@ -1,4 +1,5 @@
 import os
+from zipfile import BadZipFile
 
 import numpy as np
 from numpy import zeros, uint8, int64, float32, bool_, stack
@@ -154,30 +155,45 @@ class ReplayMemory:
         """
         Restores the buffer arrays and write position from `path/replay_memory.npz`.
         """
+        self._restore_snapshot(self._read_snapshot(path))
+
+    def _read_snapshot(self, path):
         file_path = os.path.join(path, "replay_memory.npz")
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"No replay memory found at '{file_path}'.")
 
-        data = np.load(file_path)
-        if "boundary" not in data:
-            raise ValueError(
-                f"Replay memory '{file_path}' has no boundary metadata. Older replay "
-                "checkpoints are unsupported; start a new run without --resume-from "
-                "using a new --save-path."
-            )
-        if data["frames"].shape != self.frames.shape:
-            raise ValueError(
-                f"Loaded replay memory shape {data['frames'].shape} doesn't match "
-                f"this buffer's configured shape {self.frames.shape}."
-            )
+        fields = ("frames", "actions", "rewards", "terminal", "boundary", "idx", "count")
+        try:
+            data = np.load(file_path, allow_pickle=False)
+        except (OSError, BadZipFile, EOFError, ValueError) as error:
+            raise ValueError(f"Cannot read replay memory '{file_path}': {error}") from error
+        if not isinstance(data, np.lib.npyio.NpzFile):
+            raise ValueError(f"Replay memory '{file_path}' is not an npz archive.")
+        with data:
+            missing = set(fields) - set(data.files)
+            if missing:
+                raise ValueError(f"Replay memory '{file_path}' is missing fields: {', '.join(sorted(missing))}.")
+            try:
+                snapshot = {name: data[name] for name in fields}
+            except (OSError, BadZipFile, EOFError, ValueError) as error:
+                raise ValueError(f"Cannot read replay memory '{file_path}': {error}") from error
 
-        self.frames = data["frames"]
-        self.actions = data["actions"]
-        self.rewards = data["rewards"]
-        self.terminal = data["terminal"]
-        self.boundary = data["boundary"]
-        self.idx = int(data["idx"])
-        self.count = int(data["count"])
+        for name in ("frames", "actions", "rewards", "terminal", "boundary"):
+            loaded = snapshot[name]
+            expected = getattr(self, name)
+            if loaded.shape != expected.shape or loaded.dtype != expected.dtype:
+                raise ValueError(
+                    f"Replay memory '{file_path}' {name} has shape {loaded.shape} and dtype {loaded.dtype}; "
+                    f"expected shape {expected.shape} and dtype {expected.dtype}."
+                )
+
+        for name in ("idx", "count"):
+            snapshot[name] = int(snapshot[name])
+        return snapshot
+
+    def _restore_snapshot(self, snapshot):
+        for name, value in snapshot.items():
+            setattr(self, name, value)
 
 
 class VectorizedReplayMemory:
@@ -250,8 +266,21 @@ class VectorizedReplayMemory:
 
     def load_replay_memory(self, path):
         """Restores each sub-buffer from its own `path/env_<i>/` subfolder."""
-        for i, buffer in enumerate(self.buffers):
-            buffer.load_replay_memory(os.path.join(path, f"env_{i}"))
+        shard_paths = [os.path.join(path, f"env_{i}") for i in range(self.num_envs)]
+        present = [os.path.isfile(os.path.join(shard, "replay_memory.npz")) for shard in shard_paths]
+        if not any(present):
+            for buffer in self.buffers:
+                for name in ("frames", "actions", "rewards", "terminal", "boundary"):
+                    getattr(buffer, name).fill(0)
+                buffer.idx = buffer.count = 0
+            raise FileNotFoundError(f"No replay memory snapshots found under '{path}'.")
+        if not all(present):
+            missing = [os.path.join(shard_paths[i], "replay_memory.npz") for i, exists in enumerate(present) if not exists]
+            raise ValueError(f"Incomplete replay memory snapshot under '{path}'; missing: {', '.join(missing)}.")
+
+        snapshots = [buffer._read_snapshot(shard) for buffer, shard in zip(self.buffers, shard_paths)]
+        for buffer, snapshot in zip(self.buffers, snapshots):
+            buffer._restore_snapshot(snapshot)
 
     def mark_restart_boundaries(self):
         """Seals the seam between restored replay history and fresh-environment frames

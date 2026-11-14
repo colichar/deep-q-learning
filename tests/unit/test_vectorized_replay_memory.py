@@ -196,3 +196,99 @@ def test_mark_restart_boundaries_noop_on_empty_buffers():
     mem = VectorizedReplayMemory(3, 32, 2, frame_height=1, frame_width=1)
     mem.mark_restart_boundaries()
     assert all(not buffer.boundary.any() for buffer in mem.buffers)
+
+
+def _populated_memory():
+    mem = VectorizedReplayMemory(2, 32, 2, frame_height=1, frame_width=1)
+    mem.add_frames(np.array([[[11]], [[22]]], dtype=np.uint8), [1, 2], [1.0, 2.0], [False, True])
+    return mem
+
+
+def _snapshot_state(mem):
+    return [
+        {name: getattr(buffer, name).copy() for name in ("frames", "actions", "rewards", "terminal", "boundary")}
+        | {"idx": buffer.idx, "count": buffer.count}
+        for buffer in mem.buffers
+    ]
+
+
+def _assert_state(mem, expected):
+    for buffer, state in zip(mem.buffers, expected):
+        for name, value in state.items():
+            if isinstance(value, np.ndarray):
+                np.testing.assert_array_equal(getattr(buffer, name), value)
+            else:
+                assert getattr(buffer, name) == value
+
+
+def test_missing_later_shard_leaves_existing_replay_unchanged(tmp_path):
+    source = _populated_memory()
+    source.save_replay_memory(str(tmp_path))
+    (tmp_path / "env_1" / "replay_memory.npz").unlink()
+    live = _populated_memory()
+    live.add_frames(np.array([[[33]], [[44]]], dtype=np.uint8), [3, 4], [3.0, 4.0], [False, False])
+    before = _snapshot_state(live)
+
+    with pytest.raises(ValueError, match=r"Incomplete replay.*env_1/replay_memory.npz"):
+        live.load_replay_memory(str(tmp_path))
+
+    _assert_state(live, before)
+
+
+@pytest.mark.parametrize("defect, match", [
+    ("corrupt", "Cannot read replay memory.*env_1"),
+    ("wrong_archive", "env_1.*not an npz archive"),
+    ("shape", "env_1.*actions has shape"),
+    ("dtype", "env_1.*rewards has shape.*dtype"),
+    ("missing_field", "env_1.*missing fields: actions"),
+])
+def test_invalid_later_shard_leaves_existing_replay_unchanged(tmp_path, defect, match):
+    source = _populated_memory()
+    source.save_replay_memory(str(tmp_path))
+    shard = tmp_path / "env_1" / "replay_memory.npz"
+    if defect == "corrupt":
+        shard.write_bytes(b"not an npz file")
+    elif defect == "wrong_archive":
+        with open(shard, "wb") as file:
+            np.save(file, np.zeros(1))
+    else:
+        with np.load(shard) as data:
+            fields = {name: data[name] for name in data.files}
+        if defect == "shape":
+            fields["actions"] = fields["actions"][:-1]
+        elif defect == "dtype":
+            fields["rewards"] = fields["rewards"].astype(np.float64)
+        else:
+            del fields["actions"]
+        np.savez(shard, **fields)
+    live = _populated_memory()
+    before = _snapshot_state(live)
+
+    with pytest.raises(ValueError, match=match):
+        live.load_replay_memory(str(tmp_path))
+
+    _assert_state(live, before)
+
+
+def test_missing_all_shards_clears_existing_replay(tmp_path):
+    live = _populated_memory()
+
+    with pytest.raises(FileNotFoundError, match="No replay memory snapshots"):
+        live.load_replay_memory(str(tmp_path))
+
+    assert live.count == 0
+    for buffer in live.buffers:
+        assert buffer.idx == buffer.count == 0
+        for name in ("frames", "actions", "rewards", "terminal", "boundary"):
+            assert not getattr(buffer, name).any()
+
+
+def test_loading_all_shards_replaces_existing_replay(tmp_path):
+    source = _populated_memory()
+    source.save_replay_memory(str(tmp_path))
+    live = _populated_memory()
+    live.add_frames(np.array([[[33]], [[44]]], dtype=np.uint8), [3, 4], [3.0, 4.0], [False, False])
+
+    live.load_replay_memory(str(tmp_path))
+
+    _assert_state(live, _snapshot_state(source))

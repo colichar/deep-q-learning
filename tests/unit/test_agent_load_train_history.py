@@ -87,35 +87,3 @@ def test_load_train_history_picks_highest_transition_num_regardless_of_glob_orde
     assert agent.completed_transitions == 500
     assert agent.transition_nums == [499]
     assert agent.averaged_losses == [0.5]
-
-
-@pytest.mark.parametrize("missing_field", [
-    "completed_transitions", "losses", "averaged_losses", "transition_nums", "rewards",
-])
-def test_load_rejects_missing_history_fields_without_changing_progress(history_dir, missing_field):
-    history = {"completed_transitions": 103, "losses": [], "averaged_losses": [0.1],
-               "transition_nums": [100], "rewards": []}
-    del history[missing_field]
-    with open(history_dir / "train_history_103", "wb") as file:
-        pickle.dump(history, file)
-    agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
-    agent.completed_transitions = 0
-    agent.rewards = [42]
-
-    with pytest.raises(ValueError, match=rf"missing required fields: {missing_field}.*without --resume-from"):
-        agent.load_train_history(str(history_dir))
-
-    assert agent.completed_transitions == 0
-    assert agent.rewards == [42]
-
-
-@pytest.mark.parametrize("completed_transitions", [-1, 1.5, True, None])
-def test_load_rejects_invalid_progress(history_dir, completed_transitions):
-    history = {"completed_transitions": completed_transitions, "losses": [],
-               "averaged_losses": [], "transition_nums": [], "rewards": []}
-    with open(history_dir / "train_history_100", "wb") as file:
-        pickle.dump(history, file)
-    agent = SpaceInvaderAgent.__new__(SpaceInvaderAgent)
-
-    with pytest.raises(ValueError, match="invalid completed_transitions.*non-negative integer"):
-        agent.load_train_history(str(history_dir))

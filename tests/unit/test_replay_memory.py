@@ -156,14 +156,14 @@ def test_save_load_shape_mismatch(tmp_path):
         mismatched.load_replay_memory(str(tmp_path))
 
 
-def test_load_rejects_checkpoint_without_boundary_metadata(tmp_path):
+def test_load_rejects_checkpoint_without_boundary(tmp_path):
     mem = ReplayMemory(capacity=16, batch_size=2, frame_height=1, frame_width=1)
     np.savez(
         tmp_path / "replay_memory.npz",
         **{name: getattr(mem, name) for name in ("frames", "actions", "rewards", "terminal", "idx", "count")},
     )
 
-    with pytest.raises(ValueError, match="no boundary metadata.*without --resume-from"):
+    with pytest.raises(ValueError, match="missing fields: boundary"):
         mem.load_replay_memory(str(tmp_path))
 
 

@@ -621,20 +621,6 @@ class SpaceInvaderAgent:
         with open(latest_match, 'rb') as file:
             train_history = pickle.load(file)
 
-        required_fields = {"completed_transitions", "losses", "averaged_losses", "transition_nums", "rewards"}
-        missing_fields = required_fields - train_history.keys()
-        if missing_fields:
-            raise ValueError(
-                f"Training history '{latest_match}' is missing required fields: "
-                f"{', '.join(sorted(missing_fields))}. {resume_error}"
-            )
-        completed_transitions = train_history["completed_transitions"]
-        if type(completed_transitions) is not int or completed_transitions < 0:
-            raise ValueError(
-                f"Training history '{latest_match}' has invalid completed_transitions "
-                f"({completed_transitions!r}); expected a non-negative integer. {resume_error}"
-            )
-
         self.losses = train_history["losses"]
         self.averaged_losses = train_history["averaged_losses"]
         self.transition_nums = train_history["transition_nums"]
@@ -646,4 +632,4 @@ class SpaceInvaderAgent:
         # .get(..., 0.0) for backward compatibility with pickles saved before this field existed.
         self.cumulative_wall_clock_seconds = train_history.get("cumulative_wall_clock_seconds", 0.0)
 
-        self.completed_transitions = completed_transitions
+        self.completed_transitions = train_history["completed_transitions"]

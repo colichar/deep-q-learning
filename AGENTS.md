@@ -18,6 +18,12 @@ future reader, don't write it.
 Keep it terse — one line, why-only. Don't explain the whole mechanism in the comment; trust the
 reader to follow the code itself.
 
+## Checkpoint assumptions
+
+This is a single-user training project. Checkpoints are trusted artifacts written by this code; there are no
+ongoing training sessions to migrate, so breaking checkpoint-format changes are acceptable. Avoid bespoke
+legacy-format messages and redundant field/type/range guards for internally written data. Keep checks that
+protect training correctness, such as replay shape compatibility and all-or-nothing shard restoration.
 
 ## Commands
 

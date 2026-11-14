@@ -58,6 +58,31 @@ def test_save_before_training_is_resumable(tmp_path, write_replay_memory):
     assert resumed.losses == resumed.transition_nums == resumed.averaged_losses == resumed.rewards == []
 
 
+def test_missing_replay_snapshot_clears_preexisting_buffers(tmp_path):
+    agent = _agent(2)
+    agent.save(str(tmp_path), write_replay_memory=False)
+    resumed = _agent(2)
+    _record_training(resumed)
+
+    resumed.load(str(tmp_path))
+
+    assert all(buffer.count == 0 and buffer.idx == 0 for buffer in resumed.ReplayMemory.buffers)
+
+
+def test_missing_later_replay_shard_is_not_treated_as_absent_snapshot(tmp_path):
+    agent = _agent(2)
+    _record_training(agent)
+    agent.save(str(tmp_path))
+    (tmp_path / "replay_memory" / "env_1" / "replay_memory.npz").unlink()
+    resumed = _agent(2)
+    _record_training(resumed)
+
+    with pytest.raises(ValueError, match="Incomplete replay memory snapshot"):
+        resumed.load(str(tmp_path))
+
+    assert all(buffer.count == 1 for buffer in resumed.ReplayMemory.buffers)
+
+
 @pytest.mark.parametrize("num_envs", [1, 2])
 @pytest.mark.parametrize("write_replay_memory", [True, False])
 @pytest.mark.parametrize("optimizer", ["adam", "rmsprop"])
@@ -230,20 +255,15 @@ def test_exact_progress_through_periodic_save_repeat_and_resume(
     assert resumed.cumulative_wall_clock_seconds == agent.cumulative_wall_clock_seconds
 
 
-@pytest.mark.parametrize("has_history", [True, False])
-def test_legacy_history_rejected_before_loading_models_or_replay(tmp_path, has_history):
+def test_missing_history_rejected_before_loading_models_or_replay(tmp_path):
     (tmp_path / "checkpoint_metadata.json").write_text('{"num_envs": 1}')
     history_dir = tmp_path / "history"
     history_dir.mkdir()
-    if has_history:
-        with open(history_dir / "train_history_100", "wb") as file:
-            pickle.dump({"losses": [], "averaged_losses": [0.5], "transition_nums": [100], "rewards": []}, file)
     agent = _agent(1)
     agent.load_model = Mock()
     agent.load_replay_memory = Mock()
 
-    error = ValueError if has_history else FileNotFoundError
-    with pytest.raises(error, match="Older checkpoints are unsupported.*new --save-path"):
+    with pytest.raises(FileNotFoundError, match="No train_history_.*new --save-path"):
         agent.load(str(tmp_path))
 
     agent.load_model.assert_not_called()
