@@ -158,6 +158,7 @@ class SpaceInvaderAgent:
         self.averaged_losses = []
         self.rewards = []
         self._logged_reward_idx = 0  # index into self.rewards not yet folded into a log print
+        self._logged_loss_idx = 0
         self.cumulative_wall_clock_seconds = 0.0
 
         self.eval_rewards = []
@@ -310,23 +311,24 @@ class SpaceInvaderAgent:
                     self.TargetModel.set_weights(self.MainModel.get_weights())
                     print("Updating target model...")
 
-                # averaging past losses
-                if self._freq_due(transition_num, self.num_envs, self.average_loss_freq) and warmed_up:
+                if self._freq_due(transition_num, self.num_envs, self.average_loss_freq) and self.losses:
                     self.transition_nums.append(self.completed_transitions)
                     self.averaged_losses.append(mean(self.losses))
-
                     self.losses = []
 
-                    if self._freq_due(transition_num, self.num_envs, self.log_freq):
-                        recent_rewards = self.rewards[self._logged_reward_idx:]
-                        self._logged_reward_idx = len(self.rewards)
-                        avg_reward = f"{mean(recent_rewards):.2f}" if recent_rewards else "n/a (no episode finished yet)"
-                        print(
-                            f"Finished {self.completed_transitions} transitions. Loss: {self.averaged_losses[-1]:.6f}. "
-                            f"Avg episode reward: {avg_reward}"
-                        )
-                        if loss_csv_path:
-                            self._append_csv_row(loss_csv_path, [self.completed_transitions, self.averaged_losses[-1]])
+                if self._freq_due(transition_num, self.num_envs, self.log_freq):
+                    recent_rewards = self.rewards[self._logged_reward_idx:]
+                    self._logged_reward_idx = len(self.rewards)
+                    avg_reward = f"{mean(recent_rewards):.2f}" if recent_rewards else "n/a (no episode finished yet)"
+                    has_new_average = len(self.averaged_losses) > self._logged_loss_idx
+                    avg_loss = f"{self.averaged_losses[-1]:.6f}" if has_new_average else "n/a (no new loss average)"
+                    self._logged_loss_idx = len(self.averaged_losses)
+                    print(
+                        f"Finished {self.completed_transitions} transitions. Loss: {avg_loss}. "
+                        f"Avg episode reward: {avg_reward}"
+                    )
+                    if loss_csv_path and has_new_average:
+                        self._append_csv_row(loss_csv_path, [self.completed_transitions, self.averaged_losses[-1]])
 
                 if self.checkpoint_path and self._freq_due(transition_num, self.num_envs, self.checkpoint_freq):
                     print(f"Checkpointing at transition {self.completed_transitions}...")
@@ -522,6 +524,7 @@ class SpaceInvaderAgent:
             "transition_nums": self.transition_nums,
             "losses": self.losses,
             "rewards": self.rewards,
+            "logged_loss_idx": getattr(self, "_logged_loss_idx", 0),
             "cumulative_wall_clock_seconds": self.cumulative_wall_clock_seconds,
         }
 
@@ -636,6 +639,7 @@ class SpaceInvaderAgent:
         self.averaged_losses = train_history["averaged_losses"]
         self.transition_nums = train_history["transition_nums"]
         self.rewards = train_history["rewards"]
+        self._logged_loss_idx = train_history.get("logged_loss_idx", len(self.averaged_losses))
         # Reset the log-print cursor to the end of the restored history, so the first log line
         # after resuming averages only newly-finished episodes, not the whole pre-resume history.
         self._logged_reward_idx = len(self.rewards)
